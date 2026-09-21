@@ -10,6 +10,7 @@ public sealed class ResilientRateLimiter : RateLimiter
     private readonly RateLimiter _primary;
     private readonly RateLimiter? _fallback;
     private readonly ResilientRateLimiterOptions _options;
+    private readonly StoreFailureBehavior _failureBehavior;
     private readonly TimeProvider _timeProvider;
     private readonly ResiliencePipeline<RateLimitLease> _pipeline;
 
@@ -35,6 +36,7 @@ public sealed class ResilientRateLimiter : RateLimiter
         _primary = primary;
         _fallback = fallback;
         _options = options;
+        _failureBehavior = options.FailureBehavior;
         _timeProvider = timeProvider ?? TimeProvider.System;
         _pipeline = BuildPipeline();
     }
@@ -45,9 +47,8 @@ public sealed class ResilientRateLimiter : RateLimiter
     /// <summary>Always <see langword="null"/>; see the README.</summary>
     public override RateLimiterStatistics? GetStatistics() => null;
 
-    /// <summary>Always rejects: a network store cannot be consulted synchronously, and the middleware calls the async path next.</summary>
-    protected override RateLimitLease AttemptAcquireCore(int permitCount) =>
-        new ResilientRateLimitLease(StaticLease.Rejected, LeaseSource.Distributed);
+    /// <summary>Always rejects, carrying no source tag: no store was consulted, so no path decided. The middleware calls the async path next.</summary>
+    protected override RateLimitLease AttemptAcquireCore(int permitCount) => StaticLease.Rejected;
 
     /// <inheritdoc />
     protected override async ValueTask<RateLimitLease> AcquireAsyncCore(int permitCount, CancellationToken cancellationToken)
@@ -87,7 +88,7 @@ public sealed class ResilientRateLimiter : RateLimiter
             .Build();
 
     private async ValueTask<RateLimitLease> FallbackAsync(CancellationToken cancellationToken) =>
-        _options.FailureBehavior switch
+        _failureBehavior switch
         {
             StoreFailureBehavior.FailOpen =>
                 new ResilientRateLimitLease(StaticLease.Acquired, LeaseSource.FailOpen),

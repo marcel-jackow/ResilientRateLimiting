@@ -152,8 +152,24 @@ public class ResilientRateLimiterTests
         using var lease = limiter.AttemptAcquire(1);
 
         Assert.False(lease.IsAcquired);
+        Assert.False(lease.TryGetMetadata(ResilientRateLimitLease.SourceMetadataName, out _));
         Assert.Equal(10, primary.AvailablePermits);
         Assert.Equal(10, fallback.AvailablePermits);
+    }
+
+    [Fact]
+    public async Task Ignores_options_mutated_after_construction()
+    {
+        var options = Options(StoreFailureBehavior.FailOpen);
+        using var primary = new FakeRateLimiter().AlwaysFail(new InvalidDataException("store down"));
+        using var limiter = new ResilientRateLimiter(primary, fallback: null, options, new FakeTimeProvider());
+
+        options.FailureBehavior = StoreFailureBehavior.LocalFallback;
+
+        using var lease = await limiter.AcquireAsync(1, TestContext.Current.CancellationToken);
+
+        Assert.True(lease.IsAcquired);
+        Assert.Equal(LeaseSource.FailOpen, SourceOf(lease));
     }
 
     [Fact]
