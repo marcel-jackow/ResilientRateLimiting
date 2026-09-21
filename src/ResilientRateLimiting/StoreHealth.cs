@@ -17,11 +17,13 @@ public sealed class StoreHealth : IDisposable
         ArgumentNullException.ThrowIfNull(options);
         options.Validate();
 
+        var shouldHandle = options.ShouldHandle;
+
         _pipeline = new ResiliencePipelineBuilder<RateLimitLease> { TimeProvider = timeProvider ?? TimeProvider.System }
             .AddCircuitBreaker(new CircuitBreakerStrategyOptions<RateLimitLease>
             {
                 ShouldHandle = args =>
-                    new ValueTask<bool>(StoreFailureClassifier.IsStoreFailure(args.Outcome.Exception, options)),
+                    new ValueTask<bool>(StoreFailureClassifier.IsStoreFailure(args.Outcome.Exception, shouldHandle)),
                 FailureRatio = 1.0,
                 MinimumThroughput = options.FailuresBeforeOpen,
                 SamplingDuration = options.BreakerSamplingDuration,

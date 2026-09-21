@@ -8,9 +8,9 @@ public sealed class ResilientRateLimiter : RateLimiter
 {
     private readonly RateLimiter _primary;
     private readonly RateLimiter? _fallback;
-    private readonly ResilientRateLimiterOptions _options;
     private readonly StoreFailureBehavior _failureBehavior;
     private readonly TimeSpan _storeTimeout;
+    private readonly Func<Exception, bool>? _shouldHandle;
     private readonly TimeProvider _timeProvider;
     private readonly StoreHealth _storeHealth;
     private readonly bool _ownsStoreHealth;
@@ -42,9 +42,9 @@ public sealed class ResilientRateLimiter : RateLimiter
 
         _primary = primary;
         _fallback = fallback;
-        _options = options;
         _failureBehavior = options.FailureBehavior;
         _storeTimeout = options.StoreTimeout;
+        _shouldHandle = options.ShouldHandle;
         _timeProvider = timeProvider ?? TimeProvider.System;
         _ownsStoreHealth = storeHealth is null;
         _storeHealth = storeHealth ?? new StoreHealth(options, _timeProvider);
@@ -99,7 +99,7 @@ public sealed class ResilientRateLimiter : RateLimiter
 
             return new ResilientRateLimitLease(lease, LeaseSource.Distributed);
         }
-        catch (Exception exception) when (StoreFailureClassifier.IsStoreFailure(exception, _options))
+        catch (Exception exception) when (StoreFailureClassifier.IsStoreFailure(exception, _shouldHandle))
         {
             // Anything thrown from here on has nowhere left to go, and reaches the caller.
             return await FallbackAsync(permitCount, cancellationToken).ConfigureAwait(false);

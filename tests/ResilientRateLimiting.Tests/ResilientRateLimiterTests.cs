@@ -239,7 +239,7 @@ public class ResilientRateLimiterTests
     }
 
     [Fact]
-    public async Task Ignores_options_mutated_after_construction()
+    public async Task Ignores_a_failure_behavior_mutated_after_construction()
     {
         var options = Options(StoreFailureBehavior.FailOpen);
         using var primary = new FakeRateLimiter().AlwaysFail(new InvalidDataException("store down"));
@@ -251,6 +251,20 @@ public class ResilientRateLimiterTests
 
         Assert.True(lease.IsAcquired);
         Assert.Equal(LeaseSource.FailOpen, SourceOf(lease));
+    }
+
+    [Fact]
+    public async Task Ignores_a_should_handle_predicate_mutated_after_construction()
+    {
+        var options = Options(StoreFailureBehavior.FailOpen);
+        options.ShouldHandle = _ => false;
+        using var primary = new FakeRateLimiter().AlwaysFail(new InvalidDataException("store down"));
+        using var limiter = new ResilientRateLimiter(primary, fallback: null, options, new FakeTimeProvider());
+
+        options.ShouldHandle = _ => true;
+
+        await Assert.ThrowsAsync<InvalidDataException>(
+            async () => await limiter.AcquireAsync(1, TestContext.Current.CancellationToken));
     }
 
     [Fact]
