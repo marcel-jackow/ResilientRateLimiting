@@ -26,7 +26,7 @@ public sealed class ResilientRateLimiter : RateLimiter
     /// <param name="fallback">In-memory window or token-bucket limiter, required for <see cref="StoreFailureBehavior.LocalFallback"/>; never a <see cref="ConcurrencyLimiter"/>, which hands its permit back when the lease is disposed and so cannot hold warm state.</param>
     /// <param name="options">Configuration, validated here so a wrong setup fails at startup.</param>
     /// <param name="timeProvider">Defaults to <see cref="TimeProvider.System"/>.</param>
-    /// <param name="storeHealth">Shared across partitions of the same store; omitting it gives this partition its own breaker and disables the warm-partition cap.</param>
+    /// <param name="storeHealth">Shared across partitions of the same store, and every limiter sharing one must be disposed, because the shared live-partition count only falls on disposal; omitting it gives this partition its own breaker and disables the warm-partition cap.</param>
     public ResilientRateLimiter(
         RateLimiter primary,
         RateLimiter? fallback,

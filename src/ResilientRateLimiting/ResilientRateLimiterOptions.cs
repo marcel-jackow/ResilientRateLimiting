@@ -33,7 +33,7 @@ public sealed class ResilientRateLimiterOptions
     /// <summary>Upper bound on how long warm fallback state is held for an idle partition.</summary>
     public TimeSpan MaxWarmRetention { get; set; } = TimeSpan.FromMinutes(2);
 
-    /// <summary>Above this many live partitions, warm state is released early.</summary>
+    /// <summary>Above this many live partitions on the shared <see cref="StoreHealth"/>, warm state is released early for every partition, not only the excess ones.</summary>
     public int MaxWarmPartitions { get; set; } = 10_000;
 
     /// <summary>Scales the local budget until this process first reaches the store. 1.0 means no effect.</summary>
