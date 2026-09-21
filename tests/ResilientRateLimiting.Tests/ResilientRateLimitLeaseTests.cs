@@ -5,12 +5,28 @@ namespace ResilientRateLimiting.Tests;
 
 public class ResilientRateLimitLeaseTests
 {
-    private sealed class StubLease(bool acquired, TimeSpan? retryAfter = null) : RateLimitLease
+    private const string ForwardedValue = "forwarded";
+
+    private sealed class StubLease(bool acquired, TimeSpan? retryAfter = null, string[]? ownNames = null)
+        : RateLimitLease
     {
         public override bool IsAcquired => acquired;
 
-        public override IEnumerable<string> MetadataNames =>
-            retryAfter is null ? [] : [MetadataName.RetryAfter.Name];
+        public override IEnumerable<string> MetadataNames
+        {
+            get
+            {
+                foreach (var name in ownNames ?? [])
+                {
+                    yield return name;
+                }
+
+                if (retryAfter is not null)
+                {
+                    yield return MetadataName.RetryAfter.Name;
+                }
+            }
+        }
 
         public override bool TryGetMetadata(string metadataName, out object? metadata)
         {
@@ -20,9 +36,50 @@ public class ResilientRateLimitLeaseTests
                 return true;
             }
 
+            if (ownNames is not null && ownNames.Contains(metadataName))
+            {
+                metadata = ForwardedValue;
+                return true;
+            }
+
             metadata = null;
             return false;
         }
+    }
+
+    [Fact]
+    public void Reports_every_name_the_inner_lease_reports_then_its_own()
+    {
+        using var lease = new ResilientRateLimitLease(
+            new StubLease(acquired: false, ownNames: ["CUSTOM_ONE", "CUSTOM_TWO"]),
+            LeaseSource.Distributed,
+            retryAfter: TimeSpan.FromSeconds(9));
+
+        var names = lease.MetadataNames.ToArray();
+
+        Assert.Equal(
+            [
+                "CUSTOM_ONE",
+                "CUSTOM_TWO",
+                ResilientRateLimitLease.SourceMetadataName,
+                MetadataName.RetryAfter.Name,
+            ],
+            names);
+
+        Assert.True(lease.TryGetMetadata("CUSTOM_ONE", out var forwarded));
+        Assert.Equal(ForwardedValue, forwarded);
+    }
+
+    [Fact]
+    public void Does_not_repeat_a_name_the_inner_lease_already_reports()
+    {
+        using var lease = new ResilientRateLimitLease(
+            new StubLease(acquired: true, ownNames: [ResilientRateLimitLease.SourceMetadataName]),
+            LeaseSource.LocalFallback);
+
+        var names = lease.MetadataNames.ToArray();
+
+        Assert.Equal(1, names.Count(name => name == ResilientRateLimitLease.SourceMetadataName));
     }
 
     [Fact]
