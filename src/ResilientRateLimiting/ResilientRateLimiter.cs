@@ -81,7 +81,7 @@ public sealed class ResilientRateLimiter : RateLimiter
         }
     }
 
-    /// <summary>Always <see langword="null"/>; see the README.</summary>
+    /// <summary>Always <see langword="null"/>: the decorator keeps no counters of its own, and the store limiter answers for the shared state.</summary>
     public override RateLimiterStatistics? GetStatistics() => null;
 
     /// <summary>Always rejects, carrying no source tag: no store was consulted, so no path decided. The middleware calls the async path next.</summary>
