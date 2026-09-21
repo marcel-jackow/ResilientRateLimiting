@@ -203,7 +203,7 @@ public sealed class ResilientRateLimiter : RateLimiter
     /// <summary>Mirrors an admitted request in the local counter and discards the answer.</summary>
     private void ConsumeLocalPermit(int permitCount)
     {
-        if (_fallback is null)
+        if (_fallback is null || _failureBehavior != StoreFailureBehavior.LocalFallback)
         {
             return;
         }

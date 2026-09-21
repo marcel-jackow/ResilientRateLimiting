@@ -188,6 +188,21 @@ public class ResilientRateLimiterTests
     }
 
     [Fact]
+    public async Task Does_not_warm_a_fallback_a_fail_open_limiter_will_never_consult()
+    {
+        using var primary = new FakeRateLimiter(permitLimit: 10);
+        using var fallback = new FakeRateLimiter(permitLimit: 10);
+        using var limiter = new ResilientRateLimiter(
+            primary, fallback, Options(StoreFailureBehavior.FailOpen), new FakeTimeProvider());
+
+        using var lease = await limiter.AcquireAsync(1, TestContext.Current.CancellationToken);
+
+        Assert.Equal(LeaseSource.Distributed, SourceOf(lease));
+        Assert.Equal(10, fallback.AvailablePermits);
+        Assert.Equal(TimeSpan.Zero, limiter.IdleDuration);
+    }
+
+    [Fact]
     public async Task Rejects_the_request_when_configured_to_fail_closed()
     {
         using var primary = new FakeRateLimiter().AlwaysFail(new InvalidDataException("store down"));
