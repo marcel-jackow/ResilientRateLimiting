@@ -75,6 +75,36 @@ public class ResilientRateLimiterOptionsTests
         Assert.Contains(nameof(ResilientRateLimiterOptions.FailuresBeforeOpen), error.Message);
     }
 
+    [Fact]
+    public void Rejects_a_non_positive_store_timeout()
+    {
+        var options = Valid();
+        options.StoreTimeout = TimeSpan.Zero;
+
+        var error = Assert.Throws<InvalidOperationException>(options.Validate);
+        Assert.Contains(nameof(ResilientRateLimiterOptions.StoreTimeout), error.Message);
+    }
+
+    [Fact]
+    public void Rejects_a_non_positive_break_duration()
+    {
+        var options = Valid();
+        options.BreakDuration = TimeSpan.Zero;
+
+        var error = Assert.Throws<InvalidOperationException>(options.Validate);
+        Assert.Contains(nameof(ResilientRateLimiterOptions.BreakDuration), error.Message);
+    }
+
+    [Fact]
+    public void Rejects_a_partition_cap_below_one()
+    {
+        var options = Valid();
+        options.MaxWarmPartitions = 0;
+
+        var error = Assert.Throws<InvalidOperationException>(options.Validate);
+        Assert.Contains(nameof(ResilientRateLimiterOptions.MaxWarmPartitions), error.Message);
+    }
+
     [Theory]
     [InlineData(100, 3, 34)]
     [InlineData(100, 1, 100)]
