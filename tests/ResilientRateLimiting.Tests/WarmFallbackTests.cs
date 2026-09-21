@@ -1,4 +1,5 @@
 using Microsoft.Extensions.Time.Testing;
+using System.Threading.RateLimiting;
 using Xunit;
 
 namespace ResilientRateLimiting.Tests;
@@ -69,5 +70,46 @@ public class WarmFallbackTests
 
         Assert.True(lease.IsAcquired);
         Assert.Equal(6, fallback.AvailablePermits);
+    }
+
+    [Fact]
+    public async Task An_allowed_request_above_the_local_budget_still_returns_the_store_lease()
+    {
+        using var primary = new FakeRateLimiter(permitLimit: 100);
+        using var fallback = new TokenBucketRateLimiter(new TokenBucketRateLimiterOptions
+        {
+            TokenLimit = 34,
+            TokensPerPeriod = 34,
+            ReplenishmentPeriod = TimeSpan.FromMinutes(1),
+            QueueLimit = 0,
+            AutoReplenishment = false,
+        });
+        using var limiter = new ResilientRateLimiter(primary, fallback, Options(), new FakeTimeProvider());
+
+        using var lease = await limiter.AcquireAsync(50, TestContext.Current.CancellationToken);
+
+        Assert.True(lease.IsAcquired);
+        Assert.Equal(LeaseSource.Distributed, SourceOf(lease));
+        Assert.Equal(50, primary.AvailablePermits);
+    }
+
+    [Fact]
+    public async Task A_throwing_fallback_does_not_fail_a_request_the_store_allowed()
+    {
+        using var primary = new FakeRateLimiter(permitLimit: 10);
+        using var fallback = new FakeRateLimiter(permitLimit: 10)
+            .ThrowsOnAttemptAcquire(new InvalidOperationException("mirror broken"));
+        using var limiter = new ResilientRateLimiter(primary, fallback, Options(), new FakeTimeProvider());
+
+        using var lease = await limiter.AcquireAsync(1, TestContext.Current.CancellationToken);
+
+        Assert.True(lease.IsAcquired);
+        Assert.Equal(LeaseSource.Distributed, SourceOf(lease));
+    }
+
+    private static LeaseSource SourceOf(RateLimitLease lease)
+    {
+        Assert.True(lease.TryGetMetadata(ResilientRateLimitLease.SourceMetadata, out var source));
+        return source;
     }
 }

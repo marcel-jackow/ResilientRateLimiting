@@ -9,6 +9,7 @@ public sealed class FakeRateLimiter(int permitLimit = int.MaxValue) : RateLimite
     private int _available = permitLimit;
     private int _remainingFailures;
     private Exception? _failure;
+    private Exception? _attemptFailure;
     private TaskCompletionSource? _hang;
     private bool _observeCancellation = true;
     private bool _touchTokenOnResume;
@@ -47,6 +48,12 @@ public sealed class FakeRateLimiter(int permitLimit = int.MaxValue) : RateLimite
 
     public FakeRateLimiter AlwaysFail(Exception failure) => FailTimes(int.MaxValue, failure);
 
+    public FakeRateLimiter ThrowsOnAttemptAcquire(Exception failure)
+    {
+        _attemptFailure = failure;
+        return this;
+    }
+
     public FakeRateLimiter HangUntilReleased()
     {
         _hang = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -74,7 +81,8 @@ public sealed class FakeRateLimiter(int permitLimit = int.MaxValue) : RateLimite
         base.Dispose(disposing);
     }
 
-    protected override RateLimitLease AttemptAcquireCore(int permitCount) => Take(permitCount);
+    protected override RateLimitLease AttemptAcquireCore(int permitCount) =>
+        _attemptFailure is null ? Take(permitCount) : throw _attemptFailure;
 
     protected override async ValueTask<RateLimitLease> AcquireAsyncCore(int permitCount, CancellationToken cancellationToken)
     {

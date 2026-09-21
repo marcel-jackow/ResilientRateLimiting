@@ -208,8 +208,15 @@ public sealed class ResilientRateLimiter : RateLimiter
             return;
         }
 
-        using var warm = _fallback.AttemptAcquire(permitCount);
-        Interlocked.Exchange(ref _lastLocalConsumption, _timeProvider.GetTimestamp());
+        try
+        {
+            using var warm = _fallback.AttemptAcquire(permitCount);
+            Interlocked.Exchange(ref _lastLocalConsumption, _timeProvider.GetTimestamp());
+        }
+        catch
+        {
+            // Deliberately empty: the store already charged the caller, so a mirror failure must not surface.
+        }
     }
 
     private static void Abandon(Task<RateLimitLease> storeCall, CancellationTokenSource storeToken) =>
