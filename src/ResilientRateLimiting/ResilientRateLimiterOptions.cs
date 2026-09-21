@@ -9,8 +9,11 @@ public sealed class ResilientRateLimiterOptions
     /// <summary>How long to wait for the store before abandoning the call.</summary>
     public TimeSpan StoreTimeout { get; set; } = TimeSpan.FromMilliseconds(20);
 
-    /// <summary>Failed store calls within <see cref="BreakerSamplingDuration"/> that open the breaker. Minimum 2.</summary>
+    /// <summary>Store calls needed within <see cref="BreakerSamplingDuration"/> before the breaker may open, and only then if the failed share reaches <see cref="FailureRatio"/>. Minimum 2.</summary>
     public int FailuresBeforeOpen { get; set; } = 5;
+
+    /// <summary>The share of store calls within <see cref="BreakerSamplingDuration"/> that must fail before the breaker opens.</summary>
+    public double FailureRatio { get; set; } = 1.0;
 
     /// <summary>How long the breaker stays open before it probes the store again.</summary>
     public TimeSpan BreakDuration { get; set; } = TimeSpan.FromSeconds(5);
@@ -75,6 +78,12 @@ public sealed class ResilientRateLimiterOptions
             throw new InvalidOperationException(
                 $"{nameof(FailuresBeforeOpen)} must be at least 2. The underlying breaker cannot open " +
                 "on a single failure.");
+        }
+
+        if (FailureRatio is <= 0 or > 1)
+        {
+            throw new InvalidOperationException(
+                $"{nameof(FailureRatio)} must be greater than 0 and at most 1.");
         }
 
         if (BreakDuration <= TimeSpan.Zero)

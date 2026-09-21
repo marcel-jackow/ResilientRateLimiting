@@ -24,7 +24,7 @@ public sealed class StoreHealth : IDisposable
             {
                 ShouldHandle = args =>
                     new ValueTask<bool>(StoreFailureClassifier.IsStoreFailure(args.Outcome.Exception, shouldHandle)),
-                FailureRatio = 1.0,
+                FailureRatio = options.FailureRatio,
                 MinimumThroughput = options.FailuresBeforeOpen,
                 SamplingDuration = options.BreakerSamplingDuration,
                 BreakDuration = options.BreakDuration,

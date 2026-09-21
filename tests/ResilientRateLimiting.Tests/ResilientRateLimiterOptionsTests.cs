@@ -105,6 +105,19 @@ public class ResilientRateLimiterOptionsTests
         Assert.Contains(nameof(ResilientRateLimiterOptions.MaxWarmPartitions), error.Message);
     }
 
+    [Theory]
+    [InlineData(0)]
+    [InlineData(-0.5)]
+    [InlineData(1.5)]
+    public void Rejects_a_failure_ratio_outside_the_unit_range(double ratio)
+    {
+        var options = Valid();
+        options.FailureRatio = ratio;
+
+        var error = Assert.Throws<InvalidOperationException>(options.Validate);
+        Assert.Contains(nameof(ResilientRateLimiterOptions.FailureRatio), error.Message);
+    }
+
     [Fact]
     public void Rejects_a_non_positive_max_warm_retention()
     {

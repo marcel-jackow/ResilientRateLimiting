@@ -123,6 +123,56 @@ public class StoreHealthTests
     }
 
     [Fact]
+    public async Task Keeps_the_breaker_closed_when_one_success_dilutes_the_default_ratio()
+    {
+        var clock = new FakeTimeProvider();
+        var options = Options();
+        using var health = new StoreHealth(options, clock);
+        using var primary = new FakeRateLimiter(permitLimit: 100);
+        using var fallback = new FakeRateLimiter(permitLimit: 100);
+        using var limiter = new ResilientRateLimiter(primary, fallback, options, clock, health);
+
+        (await limiter.AcquireAsync(1, TestContext.Current.CancellationToken)).Dispose();
+        primary.AlwaysFail(new InvalidDataException("store down"));
+
+        for (var i = 0; i < options.FailuresBeforeOpen; i++)
+        {
+            (await limiter.AcquireAsync(1, TestContext.Current.CancellationToken)).Dispose();
+        }
+
+        var attemptsAfterFailures = primary.AcquireAttempts;
+        (await limiter.AcquireAsync(1, TestContext.Current.CancellationToken)).Dispose();
+
+        Assert.Equal(attemptsAfterFailures + 1, primary.AcquireAttempts);
+    }
+
+    [Fact]
+    public async Task Opens_on_the_same_mixed_sequence_when_the_failure_ratio_is_lowered()
+    {
+        var clock = new FakeTimeProvider();
+        var options = Options();
+        options.FailureRatio = 0.5;
+        using var health = new StoreHealth(options, clock);
+        using var primary = new FakeRateLimiter(permitLimit: 100);
+        using var fallback = new FakeRateLimiter(permitLimit: 100);
+        using var limiter = new ResilientRateLimiter(primary, fallback, options, clock, health);
+
+        (await limiter.AcquireAsync(1, TestContext.Current.CancellationToken)).Dispose();
+        primary.AlwaysFail(new InvalidDataException("store down"));
+
+        for (var i = 0; i < options.FailuresBeforeOpen; i++)
+        {
+            (await limiter.AcquireAsync(1, TestContext.Current.CancellationToken)).Dispose();
+        }
+
+        var attemptsWhenOpened = primary.AcquireAttempts;
+        using var afterBreak = await limiter.AcquireAsync(1, TestContext.Current.CancellationToken);
+
+        Assert.Equal(LeaseSource.LocalFallback, SourceOf(afterBreak));
+        Assert.Equal(attemptsWhenOpened, primary.AcquireAttempts);
+    }
+
+    [Fact]
     public async Task Builds_its_own_store_health_when_none_is_supplied()
     {
         var clock = new FakeTimeProvider();
