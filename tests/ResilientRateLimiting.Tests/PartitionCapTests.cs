@@ -20,14 +20,11 @@ public class PartitionCapTests
         using var health = new StoreHealth(options, clock);
 
         var limiters = new List<ResilientRateLimiter>();
-        var owned = new List<FakeRateLimiter>();
 
         for (var i = 0; i < 3; i++)
         {
             var primary = new FakeRateLimiter(permitLimit: 10);
             var fallback = new FakeRateLimiter(permitLimit: 10);
-            owned.Add(primary);
-            owned.Add(fallback);
             limiters.Add(new ResilientRateLimiter(primary, fallback, options, clock, health));
         }
 
@@ -71,5 +68,28 @@ public class PartitionCapTests
         await limiterTwo.DisposeAsync();
 
         Assert.Null(limiterOne.IdleDuration);
+
+        limiterOne.Dispose();
+    }
+
+    [Fact]
+    public void Releasing_a_disposed_limiter_twice_decrements_only_once()
+    {
+        var clock = new FakeTimeProvider();
+        var options = Options(maxWarmPartitions: 1);
+        using var health = new StoreHealth(options, clock);
+
+        var primaryOne = new FakeRateLimiter(permitLimit: 10);
+        var fallbackOne = new FakeRateLimiter(permitLimit: 10);
+        using var limiterOne = new ResilientRateLimiter(primaryOne, fallbackOne, options, clock, health);
+
+        var primaryTwo = new FakeRateLimiter(permitLimit: 10);
+        var fallbackTwo = new FakeRateLimiter(permitLimit: 10);
+        var limiterTwo = new ResilientRateLimiter(primaryTwo, fallbackTwo, options, clock, health);
+
+        limiterTwo.Dispose();
+        limiterTwo.Dispose();
+
+        Assert.Equal(1, health.LivePartitions);
     }
 }

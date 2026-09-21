@@ -23,7 +23,7 @@ public sealed class ResilientRateLimiter : RateLimiter
     /// <param name="fallback">In-memory limiter, required for <see cref="StoreFailureBehavior.LocalFallback"/>.</param>
     /// <param name="options">Configuration, validated here so a wrong setup fails at startup.</param>
     /// <param name="timeProvider">Defaults to <see cref="TimeProvider.System"/>.</param>
-    /// <param name="storeHealth">Shared across partitions of the same store. Built and owned internally when omitted.</param>
+    /// <param name="storeHealth">Shared across partitions of the same store; omitting it gives this partition its own breaker and disables the warm-partition cap.</param>
     public ResilientRateLimiter(
         RateLimiter primary,
         RateLimiter? fallback,
@@ -56,7 +56,7 @@ public sealed class ResilientRateLimiter : RateLimiter
         _storeHealth.RegisterPartition();
     }
 
-    /// <summary>Reports no idle time while local fallback state is still held; otherwise forwards the primary limiter's answer.</summary>
+    /// <summary>Reports no idle time while local fallback state is still held, unless the store's live partition count exceeds <see cref="ResilientRateLimiterOptions.MaxWarmPartitions"/>; otherwise forwards the primary limiter's answer.</summary>
     public override TimeSpan? IdleDuration
     {
         get
@@ -114,10 +114,10 @@ public sealed class ResilientRateLimiter : RateLimiter
             return;
         }
 
+        ReleasePartition();
+
         _primary.Dispose();
         _fallback?.Dispose();
-
-        ReleasePartition();
 
         if (_ownsStoreHealth)
         {
@@ -128,14 +128,14 @@ public sealed class ResilientRateLimiter : RateLimiter
     /// <inheritdoc />
     protected override async ValueTask DisposeAsyncCore()
     {
+        ReleasePartition();
+
         await _primary.DisposeAsync().ConfigureAwait(false);
 
         if (_fallback is not null)
         {
             await _fallback.DisposeAsync().ConfigureAwait(false);
         }
-
-        ReleasePartition();
 
         if (_ownsStoreHealth)
         {
