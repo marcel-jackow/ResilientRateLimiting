@@ -13,6 +13,11 @@ internal static class StoreFailureClassifier
             return false;
         }
 
+        if (exception is OperationCanceledException)
+        {
+            return false;
+        }
+
         if (options.ShouldHandle is { } shouldHandle)
         {
             return shouldHandle(exception);
@@ -23,9 +28,7 @@ internal static class StoreFailureClassifier
             TimeoutRejectedException => true,
             BrokenCircuitException => true,
 
-            // Above the programming errors: TaskCanceledException is an OperationCanceledException.
-            OperationCanceledException => false,
-
+            // Below the store-failure cases: the remaining programming errors reach the caller.
             ArgumentException => false,
             ObjectDisposedException => false,
             InvalidOperationException => false,

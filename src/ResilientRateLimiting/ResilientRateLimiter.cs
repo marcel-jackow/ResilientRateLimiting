@@ -11,6 +11,7 @@ public sealed class ResilientRateLimiter : RateLimiter
     private readonly RateLimiter? _fallback;
     private readonly ResilientRateLimiterOptions _options;
     private readonly StoreFailureBehavior _failureBehavior;
+    private readonly TimeSpan _storeTimeout;
     private readonly TimeProvider _timeProvider;
     private readonly ResiliencePipeline<RateLimitLease> _pipeline;
 
@@ -37,6 +38,7 @@ public sealed class ResilientRateLimiter : RateLimiter
         _fallback = fallback;
         _options = options;
         _failureBehavior = options.FailureBehavior;
+        _storeTimeout = options.StoreTimeout;
         _timeProvider = timeProvider ?? TimeProvider.System;
         _pipeline = BuildPipeline();
     }
@@ -62,7 +64,7 @@ public sealed class ResilientRateLimiter : RateLimiter
         catch (Exception exception) when (StoreFailureClassifier.IsStoreFailure(exception, _options))
         {
             // Anything thrown from here on has nowhere left to go, and reaches the caller.
-            return await FallbackAsync(cancellationToken).ConfigureAwait(false);
+            return await FallbackAsync(permitCount, cancellationToken).ConfigureAwait(false);
         }
     }
 
@@ -78,9 +80,19 @@ public sealed class ResilientRateLimiter : RateLimiter
         _fallback?.Dispose();
     }
 
+    /// <inheritdoc />
+    protected override async ValueTask DisposeAsyncCore()
+    {
+        await _primary.DisposeAsync().ConfigureAwait(false);
+
+        if (_fallback is not null)
+        {
+            await _fallback.DisposeAsync().ConfigureAwait(false);
+        }
+    }
+
     private ResiliencePipeline<RateLimitLease> BuildPipeline() =>
         new ResiliencePipelineBuilder<RateLimitLease> { TimeProvider = _timeProvider }
-            .AddTimeout(new TimeoutStrategyOptions { Timeout = _options.StoreTimeout })
             .Build();
 
     private async Task<RateLimitLease> AcquireFromStoreAsync(int permitCount, CancellationToken cancellationToken) =>
@@ -92,20 +104,22 @@ public sealed class ResilientRateLimiter : RateLimiter
 
     private async ValueTask<RateLimitLease> RaceAgainstCutoffAsync(int permitCount, CancellationToken token)
     {
-        var storeCall = _primary.AcquireAsync(permitCount, token).AsTask();
+        using var storeToken = CancellationTokenSource.CreateLinkedTokenSource(token);
 
-        using var cutoff = CancellationTokenSource.CreateLinkedTokenSource(token);
-        var expired = Task.Delay(_options.StoreTimeout, _timeProvider, cutoff.Token);
+        var storeCall = _primary.AcquireAsync(permitCount, storeToken.Token).AsTask();
+        var expired = Task.Delay(_storeTimeout, _timeProvider, storeToken.Token);
 
         if (await Task.WhenAny(storeCall, expired).ConfigureAwait(false) == storeCall)
         {
-            await cutoff.CancelAsync().ConfigureAwait(false);
+            await storeToken.CancelAsync().ConfigureAwait(false);
             return await storeCall.ConfigureAwait(false);
         }
 
-        token.ThrowIfCancellationRequested();
         Abandon(storeCall);
-        throw new TimeoutRejectedException($"The store did not answer within {_options.StoreTimeout}.");
+        await storeToken.CancelAsync().ConfigureAwait(false);
+        token.ThrowIfCancellationRequested();
+
+        throw new TimeoutRejectedException($"The store did not answer within {_storeTimeout}.");
     }
 
     private static void Abandon(Task<RateLimitLease> storeCall) =>
@@ -131,7 +145,7 @@ public sealed class ResilientRateLimiter : RateLimiter
             TaskContinuationOptions.None,
             TaskScheduler.Default);
 
-    private async ValueTask<RateLimitLease> FallbackAsync(CancellationToken cancellationToken) =>
+    private async ValueTask<RateLimitLease> FallbackAsync(int permitCount, CancellationToken cancellationToken) =>
         _failureBehavior switch
         {
             StoreFailureBehavior.FailOpen =>
@@ -141,7 +155,7 @@ public sealed class ResilientRateLimiter : RateLimiter
                 new ResilientRateLimitLease(StaticLease.Rejected, LeaseSource.FailClosed),
 
             _ => new ResilientRateLimitLease(
-                await _fallback!.AcquireAsync(1, cancellationToken).ConfigureAwait(false),
+                await _fallback!.AcquireAsync(permitCount, cancellationToken).ConfigureAwait(false),
                 LeaseSource.LocalFallback),
         };
 }

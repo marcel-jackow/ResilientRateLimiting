@@ -15,6 +15,8 @@ public sealed class FakeRateLimiter(int permitLimit = int.MaxValue) : RateLimite
 
     public int AcquireAttempts { get; private set; }
 
+    public int DisposeCount { get; private set; }
+
     public int AvailablePermits
     {
         get
@@ -62,6 +64,12 @@ public sealed class FakeRateLimiter(int permitLimit = int.MaxValue) : RateLimite
         {
             _available = _permitLimit;
         }
+    }
+
+    protected override void Dispose(bool disposing)
+    {
+        DisposeCount++;
+        base.Dispose(disposing);
     }
 
     protected override RateLimitLease AttemptAcquireCore(int permitCount) => Take(permitCount);

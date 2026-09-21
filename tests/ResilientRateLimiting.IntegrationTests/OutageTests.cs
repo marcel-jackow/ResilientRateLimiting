@@ -65,8 +65,11 @@ public class OutageTests : IAsyncLifetime
             using var lease = await limiter.AcquireAsync(1, cancellationToken);
 
             Assert.True(lease.TryGetMetadata(ResilientRateLimitLease.SourceMetadataName, out var source));
-            Assert.Equal(LeaseSource.LocalFallback, source);
-            degraded++;
+
+            if ((LeaseSource)source! == LeaseSource.LocalFallback)
+            {
+                degraded++;
+            }
 
             if (lease.IsAcquired)
             {
@@ -74,11 +77,11 @@ public class OutageTests : IAsyncLifetime
             }
         }
 
-        // The claim: every request was answered and none of them threw.
+        // The claim: every request was answered, and every one of them was degraded.
         Assert.Equal(RequestsDuringOutage, degraded);
 
         // And protection did not disappear: the local budget still bounded what got through.
-        Assert.InRange(admitted, 1, LocalBudget);
+        Assert.Equal(LocalBudget, admitted);
 
         await connection.DisposeAsync();
     }

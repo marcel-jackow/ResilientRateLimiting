@@ -181,6 +181,19 @@ public class ResilientRateLimiterTests
     }
 
     [Fact]
+    public async Task The_fallback_is_charged_the_permits_the_caller_asked_for()
+    {
+        using var primary = new FakeRateLimiter().AlwaysFail(new InvalidDataException("store down"));
+        using var fallback = new FakeRateLimiter(permitLimit: 10);
+        using var limiter = new ResilientRateLimiter(primary, fallback, Options(), new FakeTimeProvider());
+
+        using var lease = await limiter.AcquireAsync(4, TestContext.Current.CancellationToken);
+
+        Assert.True(lease.IsAcquired);
+        Assert.Equal(6, fallback.AvailablePermits);
+    }
+
+    [Fact]
     public void The_sync_path_always_defers_to_the_async_path()
     {
         using var primary = new FakeRateLimiter(permitLimit: 10);
@@ -218,6 +231,32 @@ public class ResilientRateLimiterTests
         using var limiter = new ResilientRateLimiter(primary, fallback, Options(), new FakeTimeProvider());
 
         Assert.Null(limiter.GetStatistics());
+    }
+
+    [Fact]
+    public void Disposing_disposes_both_limiters()
+    {
+        var primary = new FakeRateLimiter(permitLimit: 1);
+        var fallback = new FakeRateLimiter(permitLimit: 1);
+        var limiter = new ResilientRateLimiter(primary, fallback, Options(), new FakeTimeProvider());
+
+        limiter.Dispose();
+
+        Assert.Equal(1, primary.DisposeCount);
+        Assert.Equal(1, fallback.DisposeCount);
+    }
+
+    [Fact]
+    public async Task Disposing_asynchronously_disposes_both_limiters()
+    {
+        var primary = new FakeRateLimiter(permitLimit: 1);
+        var fallback = new FakeRateLimiter(permitLimit: 1);
+        var limiter = new ResilientRateLimiter(primary, fallback, Options(), new FakeTimeProvider());
+
+        await limiter.DisposeAsync();
+
+        Assert.Equal(1, primary.DisposeCount);
+        Assert.Equal(1, fallback.DisposeCount);
     }
 
     [Fact]

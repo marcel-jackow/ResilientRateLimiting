@@ -42,7 +42,10 @@ public sealed class ResilientRateLimitLease : RateLimitLease
                 yield return name;
             }
 
-            yield return SourceMetadataName;
+            if (!innerNames.Contains(SourceMetadataName))
+            {
+                yield return SourceMetadataName;
+            }
 
             if (_retryAfter is not null && !innerNames.Contains(MetadataName.RetryAfter.Name))
             {

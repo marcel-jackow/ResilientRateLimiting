@@ -45,6 +45,20 @@ public class StoreFailureClassifierTests
         Assert.False(StoreFailureClassifier.IsStoreFailure(null, Options));
 
     [Fact]
+    public void A_user_predicate_cannot_reclassify_caller_cancellation()
+    {
+        var options = new ResilientRateLimiterOptions
+        {
+            ExpectedReplicaCount = 3,
+            FallbackRecoveryTime = TimeSpan.FromMinutes(1),
+            ShouldHandle = _ => true,
+        };
+
+        Assert.False(StoreFailureClassifier.IsStoreFailure(new OperationCanceledException(), options));
+        Assert.False(StoreFailureClassifier.IsStoreFailure(new TaskCanceledException(), options));
+    }
+
+    [Fact]
     public void A_user_predicate_replaces_the_built_in_classification()
     {
         var options = new ResilientRateLimiterOptions

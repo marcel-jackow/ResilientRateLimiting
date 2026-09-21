@@ -49,8 +49,17 @@ public sealed class ResilientRateLimiterOptions
     public Func<Exception, bool>? ShouldHandle { get; set; }
 
     /// <summary>The per-replica budget for a shared limit of <paramref name="sharedPermitLimit"/>.</summary>
-    public int LocalPermitLimit(int sharedPermitLimit) =>
-        (int)Math.Ceiling(sharedPermitLimit / (double)ExpectedReplicaCount);
+    /// <exception cref="InvalidOperationException"><see cref="ExpectedReplicaCount"/> is not set.</exception>
+    public int LocalPermitLimit(int sharedPermitLimit)
+    {
+        if (ExpectedReplicaCount < 1)
+        {
+            throw new InvalidOperationException(
+                $"{nameof(ExpectedReplicaCount)} must be set before asking for a local permit limit.");
+        }
+
+        return (int)Math.Ceiling(sharedPermitLimit / (double)ExpectedReplicaCount);
+    }
 
     /// <summary>Throws when the configuration is incomplete or contradictory.</summary>
     /// <exception cref="InvalidOperationException">The configuration cannot be used.</exception>

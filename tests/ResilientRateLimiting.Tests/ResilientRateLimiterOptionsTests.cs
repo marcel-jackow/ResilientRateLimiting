@@ -116,4 +116,13 @@ public class ResilientRateLimiterOptionsTests
 
         Assert.Equal(expected, options.LocalPermitLimit(shared));
     }
+
+    [Fact]
+    public void Refuses_a_local_permit_limit_without_a_replica_count()
+    {
+        var options = Valid();
+        options.ExpectedReplicaCount = 0;
+
+        Assert.Throws<InvalidOperationException>(() => options.LocalPermitLimit(100));
+    }
 }
