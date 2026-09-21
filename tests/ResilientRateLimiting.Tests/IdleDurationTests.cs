@@ -100,6 +100,31 @@ public class IdleDurationTests
     }
 
     [Fact]
+    public async Task Reports_not_idle_while_a_request_is_still_in_flight()
+    {
+        var clock = new FakeTimeProvider();
+        var options = Options();
+        options.MaxWarmRetention = TimeSpan.FromSeconds(1);
+
+        using var primary = new FakeRateLimiter(permitLimit: 10);
+        using var fallback = new FakeRateLimiter(permitLimit: 10);
+        using var limiter = new ResilientRateLimiter(primary, fallback, options, clock);
+
+        (await limiter.AcquireAsync(1, TestContext.Current.CancellationToken)).Dispose();
+        clock.Advance(TimeSpan.FromSeconds(11));
+
+        Assert.Equal(TimeSpan.FromSeconds(11), limiter.IdleDuration);
+
+        primary.HangUntilReleased();
+        var pending = limiter.AcquireAsync(1, TestContext.Current.CancellationToken).AsTask();
+
+        Assert.Null(limiter.IdleDuration);
+
+        primary.Release();
+        (await pending).Dispose();
+    }
+
+    [Fact]
     public async Task Reports_its_own_activity_while_an_open_breaker_leaves_the_primary_untouched()
     {
         var clock = new FakeTimeProvider();

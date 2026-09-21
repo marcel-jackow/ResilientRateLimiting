@@ -20,6 +20,7 @@ public sealed class ResilientRateLimiter : RateLimiter
     private long _lastLocalConsumption = long.MinValue;
     private long _lastActivity = long.MinValue;
     private int _released;
+    private int _inFlight;
 
     /// <param name="primary">The limiter backed by the shared store.</param>
     /// <param name="fallback">In-memory window or token-bucket limiter, required for <see cref="StoreFailureBehavior.LocalFallback"/>; never a <see cref="ConcurrencyLimiter"/>, which hands its permit back when the lease is disposed and so cannot hold warm state.</param>
@@ -58,11 +59,16 @@ public sealed class ResilientRateLimiter : RateLimiter
         _storeHealth.RegisterPartition();
     }
 
-    /// <summary>Reports no idle time while local fallback state is still held, unless the store's live partition count exceeds <see cref="ResilientRateLimiterOptions.MaxWarmPartitions"/>; otherwise reports how long ago this limiter last served a request.</summary>
+    /// <summary>Reports no idle time while a request is in flight, or while local fallback state is still held unless the store's live partition count exceeds <see cref="ResilientRateLimiterOptions.MaxWarmPartitions"/>; otherwise reports how long ago this limiter last served a request.</summary>
     public override TimeSpan? IdleDuration
     {
         get
         {
+            if (Volatile.Read(ref _inFlight) > 0)
+            {
+                return null;
+            }
+
             if (_storeHealth.LivePartitions > _maxWarmPartitions)
             {
                 return OwnIdleDuration();
@@ -90,27 +96,36 @@ public sealed class ResilientRateLimiter : RateLimiter
     /// <inheritdoc />
     protected override async ValueTask<RateLimitLease> AcquireAsyncCore(int permitCount, CancellationToken cancellationToken)
     {
+        Interlocked.Increment(ref _inFlight);
+
         try
         {
-            var lease = await AcquireFromStoreAsync(permitCount, cancellationToken).ConfigureAwait(false);
-
-            RecordActivity();
-
-            if (lease.IsAcquired)
+            try
             {
-                ConsumeLocalPermit(permitCount);
+                var lease = await AcquireFromStoreAsync(permitCount, cancellationToken).ConfigureAwait(false);
+
+                RecordActivity();
+
+                if (lease.IsAcquired)
+                {
+                    ConsumeLocalPermit(permitCount);
+                }
+
+                return new ResilientRateLimitLease(lease, LeaseSource.Distributed);
             }
+            catch (Exception exception) when (StoreFailureClassifier.IsStoreFailure(exception, _shouldHandle))
+            {
+                // Anything thrown from here on has nowhere left to go, and reaches the caller.
+                var served = await FallbackAsync(permitCount, cancellationToken).ConfigureAwait(false);
 
-            return new ResilientRateLimitLease(lease, LeaseSource.Distributed);
+                RecordActivity();
+
+                return served;
+            }
         }
-        catch (Exception exception) when (StoreFailureClassifier.IsStoreFailure(exception, _shouldHandle))
+        finally
         {
-            // Anything thrown from here on has nowhere left to go, and reaches the caller.
-            var served = await FallbackAsync(permitCount, cancellationToken).ConfigureAwait(false);
-
-            RecordActivity();
-
-            return served;
+            Interlocked.Decrement(ref _inFlight);
         }
     }
 
