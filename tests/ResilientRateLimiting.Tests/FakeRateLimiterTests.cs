@@ -1,8 +1,6 @@
 using System.Threading.RateLimiting;
 using Xunit;
 
-#pragma warning disable xUnit1051
-
 namespace ResilientRateLimiting.Tests;
 
 public class FakeRateLimiterTests
@@ -12,9 +10,9 @@ public class FakeRateLimiterTests
     {
         using var limiter = new FakeRateLimiter(permitLimit: 2);
 
-        Assert.True((await limiter.AcquireAsync(1)).IsAcquired);
-        Assert.True((await limiter.AcquireAsync(1)).IsAcquired);
-        Assert.False((await limiter.AcquireAsync(1)).IsAcquired);
+        Assert.True((await limiter.AcquireAsync(1, TestContext.Current.CancellationToken)).IsAcquired);
+        Assert.True((await limiter.AcquireAsync(1, TestContext.Current.CancellationToken)).IsAcquired);
+        Assert.False((await limiter.AcquireAsync(1, TestContext.Current.CancellationToken)).IsAcquired);
         Assert.Equal(0, limiter.AvailablePermits);
         Assert.Equal(3, limiter.AcquireAttempts);
     }
@@ -22,12 +20,13 @@ public class FakeRateLimiterTests
     [Fact]
     public async Task Replenish_restores_the_full_budget()
     {
-        using var limiter = new FakeRateLimiter(permitLimit: 1);
-        await limiter.AcquireAsync(1);
+        using var limiter = new FakeRateLimiter(permitLimit: 3);
+        await limiter.AcquireAsync(1, TestContext.Current.CancellationToken);
+        await limiter.AcquireAsync(1, TestContext.Current.CancellationToken);
 
         limiter.Replenish();
 
-        Assert.True((await limiter.AcquireAsync(1)).IsAcquired);
+        Assert.Equal(3, limiter.AvailablePermits);
     }
 
     [Fact]
@@ -35,9 +34,9 @@ public class FakeRateLimiterTests
     {
         using var limiter = new FakeRateLimiter().FailTimes(2, new InvalidDataException("store down"));
 
-        await Assert.ThrowsAsync<InvalidDataException>(async () => await limiter.AcquireAsync(1));
-        await Assert.ThrowsAsync<InvalidDataException>(async () => await limiter.AcquireAsync(1));
-        Assert.True((await limiter.AcquireAsync(1)).IsAcquired);
+        await Assert.ThrowsAsync<InvalidDataException>(async () => await limiter.AcquireAsync(1, TestContext.Current.CancellationToken));
+        await Assert.ThrowsAsync<InvalidDataException>(async () => await limiter.AcquireAsync(1, TestContext.Current.CancellationToken));
+        Assert.True((await limiter.AcquireAsync(1, TestContext.Current.CancellationToken)).IsAcquired);
     }
 
     [Fact]
@@ -45,7 +44,7 @@ public class FakeRateLimiterTests
     {
         using var limiter = new FakeRateLimiter().HangUntilReleased();
 
-        var pending = limiter.AcquireAsync(1).AsTask();
+        var pending = limiter.AcquireAsync(1, TestContext.Current.CancellationToken).AsTask();
         Assert.False(pending.IsCompleted);
 
         limiter.Release();
@@ -70,7 +69,7 @@ public class FakeRateLimiterTests
     {
         using var limiter = new FakeRateLimiter(permitLimit: 0) { RetryAfter = TimeSpan.FromSeconds(4) };
 
-        var lease = await limiter.AcquireAsync(1);
+        var lease = await limiter.AcquireAsync(1, TestContext.Current.CancellationToken);
 
         Assert.False(lease.IsAcquired);
         Assert.True(lease.TryGetMetadata(MetadataName.RetryAfter.Name, out var value));
