@@ -18,6 +18,7 @@ public sealed class ResilientRateLimiter : RateLimiter
     private readonly TimeSpan _retention;
     private readonly int _maxWarmPartitions;
     private long _lastLocalConsumption = long.MinValue;
+    private long _lastActivity = long.MinValue;
     private int _released;
 
     /// <param name="primary">The limiter backed by the shared store.</param>
@@ -57,25 +58,25 @@ public sealed class ResilientRateLimiter : RateLimiter
         _storeHealth.RegisterPartition();
     }
 
-    /// <summary>Reports no idle time while local fallback state is still held, unless the store's live partition count exceeds <see cref="ResilientRateLimiterOptions.MaxWarmPartitions"/>; otherwise forwards the primary limiter's answer.</summary>
+    /// <summary>Reports no idle time while local fallback state is still held, unless the store's live partition count exceeds <see cref="ResilientRateLimiterOptions.MaxWarmPartitions"/>; otherwise reports how long ago this limiter last served a request.</summary>
     public override TimeSpan? IdleDuration
     {
         get
         {
             if (_storeHealth.LivePartitions > _maxWarmPartitions)
             {
-                return _primary.IdleDuration;
+                return OwnIdleDuration();
             }
 
             var lastConsumption = Interlocked.Read(ref _lastLocalConsumption);
 
             if (lastConsumption == long.MinValue)
             {
-                return _primary.IdleDuration;
+                return OwnIdleDuration();
             }
 
             return _timeProvider.GetElapsedTime(lastConsumption) >= _retention
-                ? _primary.IdleDuration
+                ? OwnIdleDuration()
                 : null;
         }
     }
@@ -93,6 +94,8 @@ public sealed class ResilientRateLimiter : RateLimiter
         {
             var lease = await AcquireFromStoreAsync(permitCount, cancellationToken).ConfigureAwait(false);
 
+            RecordActivity();
+
             if (lease.IsAcquired)
             {
                 ConsumeLocalPermit(permitCount);
@@ -103,7 +106,11 @@ public sealed class ResilientRateLimiter : RateLimiter
         catch (Exception exception) when (StoreFailureClassifier.IsStoreFailure(exception, _shouldHandle))
         {
             // Anything thrown from here on has nowhere left to go, and reaches the caller.
-            return await FallbackAsync(permitCount, cancellationToken).ConfigureAwait(false);
+            var served = await FallbackAsync(permitCount, cancellationToken).ConfigureAwait(false);
+
+            RecordActivity();
+
+            return served;
         }
     }
 
@@ -143,6 +150,17 @@ public sealed class ResilientRateLimiter : RateLimiter
             _storeHealth.Dispose();
         }
     }
+
+    private TimeSpan? OwnIdleDuration()
+    {
+        var lastActivity = Interlocked.Read(ref _lastActivity);
+
+        return lastActivity == long.MinValue
+            ? _primary.IdleDuration
+            : _timeProvider.GetElapsedTime(lastActivity);
+    }
+
+    private void RecordActivity() => Interlocked.Exchange(ref _lastActivity, _timeProvider.GetTimestamp());
 
     private void ReleasePartition()
     {

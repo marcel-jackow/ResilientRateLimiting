@@ -35,7 +35,9 @@ public sealed class FakeRateLimiter(int permitLimit = int.MaxValue) : RateLimite
 
     public TimeSpan? RetryAfter { get; set; }
 
-    public override TimeSpan? IdleDuration => TimeSpan.Zero;
+    public TimeSpan? ReportedIdleDuration { get; set; } = TimeSpan.Zero;
+
+    public override TimeSpan? IdleDuration => ReportedIdleDuration;
 
     public override RateLimiterStatistics? GetStatistics() => null;
 
