@@ -1,6 +1,6 @@
 namespace ResilientRateLimiting;
 
-/// <summary>Configuration for resilient rate limiting.</summary>
+/// <summary>Configuration for <see cref="ResilientRateLimiter"/>.</summary>
 public sealed class ResilientRateLimiterOptions
 {
     /// <summary>Polly refuses a sampling duration below this.</summary>
