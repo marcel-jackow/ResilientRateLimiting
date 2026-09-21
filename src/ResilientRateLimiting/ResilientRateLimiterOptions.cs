@@ -99,6 +99,11 @@ public sealed class ResilientRateLimiterOptions
             throw new InvalidOperationException($"{nameof(MaxWarmPartitions)} must be at least 1.");
         }
 
+        if (MaxWarmRetention <= TimeSpan.Zero)
+        {
+            throw new InvalidOperationException($"{nameof(MaxWarmRetention)} must be greater than zero.");
+        }
+
         if (FailureBehavior != StoreFailureBehavior.LocalFallback)
         {
             return;

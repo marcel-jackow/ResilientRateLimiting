@@ -51,6 +51,34 @@ public class IdleDurationTests
     }
 
     [Fact]
+    public async Task Forwards_the_inner_value_exactly_at_the_retention_boundary()
+    {
+        var clock = new FakeTimeProvider();
+        using var primary = new FakeRateLimiter(permitLimit: 10);
+        using var fallback = new FakeRateLimiter(permitLimit: 10);
+        using var limiter = new ResilientRateLimiter(primary, fallback, Options(), clock);
+
+        (await limiter.AcquireAsync(1, TestContext.Current.CancellationToken)).Dispose();
+        clock.Advance(TimeSpan.FromMinutes(1));
+
+        Assert.Equal(primary.IdleDuration, limiter.IdleDuration);
+    }
+
+    [Fact]
+    public async Task Reports_not_idle_while_serving_from_the_fallback_during_an_outage()
+    {
+        var clock = new FakeTimeProvider();
+        using var primary = new FakeRateLimiter().AlwaysFail(new InvalidDataException("store down"));
+        using var fallback = new FakeRateLimiter(permitLimit: 10);
+        using var limiter = new ResilientRateLimiter(primary, fallback, Options(), clock);
+
+        (await limiter.AcquireAsync(1, TestContext.Current.CancellationToken)).Dispose();
+        clock.Advance(TimeSpan.FromSeconds(30));
+
+        Assert.Null(limiter.IdleDuration);
+    }
+
+    [Fact]
     public async Task Caps_retention_at_the_configured_maximum()
     {
         var clock = new FakeTimeProvider();

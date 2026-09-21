@@ -105,6 +105,16 @@ public class ResilientRateLimiterOptionsTests
         Assert.Contains(nameof(ResilientRateLimiterOptions.MaxWarmPartitions), error.Message);
     }
 
+    [Fact]
+    public void Rejects_a_non_positive_max_warm_retention()
+    {
+        var options = Valid();
+        options.MaxWarmRetention = TimeSpan.Zero;
+
+        var error = Assert.Throws<InvalidOperationException>(options.Validate);
+        Assert.Contains(nameof(ResilientRateLimiterOptions.MaxWarmRetention), error.Message);
+    }
+
     [Theory]
     [InlineData(100, 3, 34)]
     [InlineData(100, 1, 100)]
