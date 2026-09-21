@@ -11,6 +11,7 @@ public sealed class FakeRateLimiter(int permitLimit = int.MaxValue) : RateLimite
     private Exception? _failure;
     private TaskCompletionSource? _hang;
     private bool _observeCancellation = true;
+    private bool _touchTokenOnResume;
 
     private int _leasesDisposed;
 
@@ -59,6 +60,12 @@ public sealed class FakeRateLimiter(int permitLimit = int.MaxValue) : RateLimite
         return this;
     }
 
+    public FakeRateLimiter TouchesTokenOnResume()
+    {
+        _touchTokenOnResume = true;
+        return this;
+    }
+
     public void Release() => _hang?.TrySetResult();
 
     protected override void Dispose(bool disposing)
@@ -82,8 +89,11 @@ public sealed class FakeRateLimiter(int permitLimit = int.MaxValue) : RateLimite
             else
             {
                 await hang.Task.ConfigureAwait(false);
+            }
 
-                // A real client blocking on the token touches its wait handle when it resumes.
+            if (_touchTokenOnResume)
+            {
+                // A client blocking on the token touches its wait handle when it resumes.
                 _ = cancellationToken.WaitHandle.WaitOne(0);
             }
         }

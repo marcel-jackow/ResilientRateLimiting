@@ -153,7 +153,7 @@ public class ResilientRateLimiterTests
     [Fact]
     public async Task An_abandoned_store_call_keeps_its_cancellation_source_until_it_finishes()
     {
-        using var primary = new FakeRateLimiter(permitLimit: 1).HangIgnoringCancellation();
+        using var primary = new FakeRateLimiter(permitLimit: 1).HangIgnoringCancellation().TouchesTokenOnResume();
         using var fallback = new FakeRateLimiter(permitLimit: 1);
         using var limiter = new ResilientRateLimiter(primary, fallback, Options(), new FakeTimeProvider());
         using var caller = new CancellationTokenSource();

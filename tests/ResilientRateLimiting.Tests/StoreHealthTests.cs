@@ -101,6 +101,28 @@ public class StoreHealthTests
     }
 
     [Fact]
+    public async Task Ignores_a_should_handle_predicate_mutated_after_construction()
+    {
+        var clock = new FakeTimeProvider();
+        var breakerOptions = Options();
+        breakerOptions.ShouldHandle = _ => false;
+        using var health = new StoreHealth(breakerOptions, clock);
+
+        breakerOptions.ShouldHandle = _ => true;
+
+        using var primary = new FakeRateLimiter().AlwaysFail(new InvalidDataException("store down"));
+        using var fallback = new FakeRateLimiter(permitLimit: 100);
+        using var limiter = new ResilientRateLimiter(primary, fallback, Options(), clock, health);
+
+        for (var i = 0; i < 4; i++)
+        {
+            (await limiter.AcquireAsync(1, TestContext.Current.CancellationToken)).Dispose();
+        }
+
+        Assert.Equal(4, primary.AcquireAttempts);
+    }
+
+    [Fact]
     public async Task Builds_its_own_store_health_when_none_is_supplied()
     {
         var clock = new FakeTimeProvider();
