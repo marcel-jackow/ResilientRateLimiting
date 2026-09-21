@@ -14,6 +14,8 @@ public sealed class ResilientRateLimiter : RateLimiter
     private readonly TimeProvider _timeProvider;
     private readonly StoreHealth _storeHealth;
     private readonly bool _ownsStoreHealth;
+    private readonly TimeSpan _retention;
+    private long _lastLocalConsumption = long.MinValue;
 
     /// <param name="primary">The limiter backed by the shared store.</param>
     /// <param name="fallback">In-memory limiter, required for <see cref="StoreFailureBehavior.LocalFallback"/>.</param>
@@ -44,10 +46,28 @@ public sealed class ResilientRateLimiter : RateLimiter
         _timeProvider = timeProvider ?? TimeProvider.System;
         _ownsStoreHealth = storeHealth is null;
         _storeHealth = storeHealth ?? new StoreHealth(options, _timeProvider);
+        _retention = options.FallbackRecoveryTime < options.MaxWarmRetention
+            ? options.FallbackRecoveryTime
+            : options.MaxWarmRetention;
     }
 
-    /// <inheritdoc />
-    public override TimeSpan? IdleDuration => _primary.IdleDuration;
+    /// <summary>Reports no idle time while local fallback state is still held; otherwise forwards the primary limiter's answer.</summary>
+    public override TimeSpan? IdleDuration
+    {
+        get
+        {
+            var lastConsumption = Interlocked.Read(ref _lastLocalConsumption);
+
+            if (lastConsumption == long.MinValue)
+            {
+                return _primary.IdleDuration;
+            }
+
+            return _timeProvider.GetElapsedTime(lastConsumption) >= _retention
+                ? _primary.IdleDuration
+                : null;
+        }
+    }
 
     /// <summary>Always <see langword="null"/>; see the README.</summary>
     public override RateLimiterStatistics? GetStatistics() => null;
@@ -145,6 +165,7 @@ public sealed class ResilientRateLimiter : RateLimiter
         }
 
         using var warm = _fallback.AttemptAcquire(permitCount);
+        Interlocked.Exchange(ref _lastLocalConsumption, _timeProvider.GetTimestamp());
     }
 
     private static void Abandon(Task<RateLimitLease> storeCall) =>
@@ -180,7 +201,14 @@ public sealed class ResilientRateLimiter : RateLimiter
                 new ResilientRateLimitLease(StaticLease.Rejected, LeaseSource.FailClosed),
 
             _ => new ResilientRateLimitLease(
-                await _fallback!.AcquireAsync(permitCount, cancellationToken).ConfigureAwait(false),
+                await AcquireFromFallbackAsync(permitCount, cancellationToken).ConfigureAwait(false),
                 LeaseSource.LocalFallback),
         };
+
+    private async ValueTask<RateLimitLease> AcquireFromFallbackAsync(int permitCount, CancellationToken cancellationToken)
+    {
+        var lease = await _fallback!.AcquireAsync(permitCount, cancellationToken).ConfigureAwait(false);
+        Interlocked.Exchange(ref _lastLocalConsumption, _timeProvider.GetTimestamp());
+        return lease;
+    }
 }
