@@ -1,0 +1,86 @@
+using System.Threading.RateLimiting;
+
+namespace ResilientRateLimiting;
+
+/// <summary>Wraps a lease from an inner limiter and records which path produced it.</summary>
+public sealed class ResilientRateLimitLease : RateLimitLease
+{
+    /// <summary>Metadata key carrying the <see cref="LeaseSource"/> of this lease.</summary>
+    public const string SourceMetadataName = "RESILIENCE_SOURCE";
+
+    private readonly RateLimitLease _inner;
+    private readonly TimeSpan? _retryAfter;
+
+    /// <param name="inner">The lease produced by the limiter that answered.</param>
+    /// <param name="source">Which path answered.</param>
+    /// <param name="retryAfter">
+    /// Used only when <paramref name="inner"/> carries no <see cref="MetadataName.RetryAfter"/> value.
+    /// </param>
+    public ResilientRateLimitLease(RateLimitLease inner, LeaseSource source, TimeSpan? retryAfter = null)
+    {
+        ArgumentNullException.ThrowIfNull(inner);
+        _inner = inner;
+        _retryAfter = retryAfter;
+        Source = source;
+    }
+
+    /// <summary>Which path produced this lease.</summary>
+    public LeaseSource Source { get; }
+
+    /// <inheritdoc />
+    public override bool IsAcquired => _inner.IsAcquired;
+
+    /// <inheritdoc />
+    public override IEnumerable<string> MetadataNames
+    {
+        get
+        {
+            var innerNames = _inner.MetadataNames.ToArray();
+
+            foreach (var name in innerNames)
+            {
+                yield return name;
+            }
+
+            yield return SourceMetadataName;
+
+            if (_retryAfter is not null && !innerNames.Contains(MetadataName.RetryAfter.Name))
+            {
+                yield return MetadataName.RetryAfter.Name;
+            }
+        }
+    }
+
+    /// <inheritdoc />
+    public override bool TryGetMetadata(string metadataName, out object? metadata)
+    {
+        if (metadataName == SourceMetadataName)
+        {
+            metadata = Source;
+            return true;
+        }
+
+        if (_inner.TryGetMetadata(metadataName, out metadata))
+        {
+            return true;
+        }
+
+        if (metadataName == MetadataName.RetryAfter.Name && _retryAfter is { } value)
+        {
+            metadata = value;
+            return true;
+        }
+
+        metadata = null;
+        return false;
+    }
+
+    /// <inheritdoc />
+    protected override void Dispose(bool disposing)
+    {
+        if (disposing)
+        {
+            _inner.Dispose();
+        }
+    }
+}

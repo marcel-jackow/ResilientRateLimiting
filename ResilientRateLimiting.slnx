@@ -1,0 +1,8 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/ResilientRateLimiting/ResilientRateLimiting.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/ResilientRateLimiting.Tests/ResilientRateLimiting.Tests.csproj" />
+  </Folder>
+</Solution>
