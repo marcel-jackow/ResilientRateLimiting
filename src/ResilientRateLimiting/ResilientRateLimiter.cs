@@ -15,7 +15,9 @@ public sealed class ResilientRateLimiter : RateLimiter
     private readonly StoreHealth _storeHealth;
     private readonly bool _ownsStoreHealth;
     private readonly TimeSpan _retention;
+    private readonly int _maxWarmPartitions;
     private long _lastLocalConsumption = long.MinValue;
+    private int _released;
 
     /// <param name="primary">The limiter backed by the shared store.</param>
     /// <param name="fallback">In-memory limiter, required for <see cref="StoreFailureBehavior.LocalFallback"/>.</param>
@@ -49,6 +51,9 @@ public sealed class ResilientRateLimiter : RateLimiter
         _retention = options.FallbackRecoveryTime < options.MaxWarmRetention
             ? options.FallbackRecoveryTime
             : options.MaxWarmRetention;
+        _maxWarmPartitions = options.MaxWarmPartitions;
+
+        _storeHealth.RegisterPartition();
     }
 
     /// <summary>Reports no idle time while local fallback state is still held; otherwise forwards the primary limiter's answer.</summary>
@@ -56,6 +61,11 @@ public sealed class ResilientRateLimiter : RateLimiter
     {
         get
         {
+            if (_storeHealth.LivePartitions > _maxWarmPartitions)
+            {
+                return _primary.IdleDuration;
+            }
+
             var lastConsumption = Interlocked.Read(ref _lastLocalConsumption);
 
             if (lastConsumption == long.MinValue)
@@ -107,6 +117,8 @@ public sealed class ResilientRateLimiter : RateLimiter
         _primary.Dispose();
         _fallback?.Dispose();
 
+        ReleasePartition();
+
         if (_ownsStoreHealth)
         {
             _storeHealth.Dispose();
@@ -123,9 +135,19 @@ public sealed class ResilientRateLimiter : RateLimiter
             await _fallback.DisposeAsync().ConfigureAwait(false);
         }
 
+        ReleasePartition();
+
         if (_ownsStoreHealth)
         {
             _storeHealth.Dispose();
+        }
+    }
+
+    private void ReleasePartition()
+    {
+        if (Interlocked.Exchange(ref _released, 1) == 0)
+        {
+            _storeHealth.ReleasePartition();
         }
     }
 
