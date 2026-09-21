@@ -1,4 +1,3 @@
-using Polly;
 using Polly.Timeout;
 using System.Threading.RateLimiting;
 
@@ -13,17 +12,20 @@ public sealed class ResilientRateLimiter : RateLimiter
     private readonly StoreFailureBehavior _failureBehavior;
     private readonly TimeSpan _storeTimeout;
     private readonly TimeProvider _timeProvider;
-    private readonly ResiliencePipeline<RateLimitLease> _pipeline;
+    private readonly StoreHealth _storeHealth;
+    private readonly bool _ownsStoreHealth;
 
     /// <param name="primary">The limiter backed by the shared store.</param>
     /// <param name="fallback">In-memory limiter, required for <see cref="StoreFailureBehavior.LocalFallback"/>.</param>
     /// <param name="options">Configuration, validated here so a wrong setup fails at startup.</param>
     /// <param name="timeProvider">Defaults to <see cref="TimeProvider.System"/>.</param>
+    /// <param name="storeHealth">Shared across partitions of the same store. Built and owned internally when omitted.</param>
     public ResilientRateLimiter(
         RateLimiter primary,
         RateLimiter? fallback,
         ResilientRateLimiterOptions options,
-        TimeProvider? timeProvider = null)
+        TimeProvider? timeProvider = null,
+        StoreHealth? storeHealth = null)
     {
         ArgumentNullException.ThrowIfNull(primary);
         ArgumentNullException.ThrowIfNull(options);
@@ -40,7 +42,8 @@ public sealed class ResilientRateLimiter : RateLimiter
         _failureBehavior = options.FailureBehavior;
         _storeTimeout = options.StoreTimeout;
         _timeProvider = timeProvider ?? TimeProvider.System;
-        _pipeline = BuildPipeline();
+        _ownsStoreHealth = storeHealth is null;
+        _storeHealth = storeHealth ?? new StoreHealth(options, _timeProvider);
     }
 
     /// <inheritdoc />
@@ -78,6 +81,11 @@ public sealed class ResilientRateLimiter : RateLimiter
 
         _primary.Dispose();
         _fallback?.Dispose();
+
+        if (_ownsStoreHealth)
+        {
+            _storeHealth.Dispose();
+        }
     }
 
     /// <inheritdoc />
@@ -89,14 +97,15 @@ public sealed class ResilientRateLimiter : RateLimiter
         {
             await _fallback.DisposeAsync().ConfigureAwait(false);
         }
+
+        if (_ownsStoreHealth)
+        {
+            _storeHealth.Dispose();
+        }
     }
 
-    private ResiliencePipeline<RateLimitLease> BuildPipeline() =>
-        new ResiliencePipelineBuilder<RateLimitLease> { TimeProvider = _timeProvider }
-            .Build();
-
     private async Task<RateLimitLease> AcquireFromStoreAsync(int permitCount, CancellationToken cancellationToken) =>
-        await _pipeline
+        await _storeHealth.Pipeline
             .ExecuteAsync(
                 async token => await RaceAgainstCutoffAsync(permitCount, token).ConfigureAwait(false),
                 cancellationToken)
