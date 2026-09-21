@@ -4,6 +4,7 @@ using System.Threading.RateLimiting;
 namespace ResilientRateLimiting;
 
 /// <summary>Wraps a store-backed rate limiter so a slow or unreachable store degrades instead of failing the request.</summary>
+/// <remarks>Must not wrap another <see cref="ResilientRateLimiter"/>: nesting shadows the inner lease's source metadata.</remarks>
 public sealed class ResilientRateLimiter : RateLimiter
 {
     private readonly RateLimiter _primary;
