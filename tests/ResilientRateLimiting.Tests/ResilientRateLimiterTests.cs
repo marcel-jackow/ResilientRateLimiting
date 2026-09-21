@@ -151,6 +151,31 @@ public class ResilientRateLimiterTests
     }
 
     [Fact]
+    public async Task An_abandoned_store_call_keeps_its_cancellation_source_until_it_finishes()
+    {
+        using var primary = new FakeRateLimiter(permitLimit: 1).HangIgnoringCancellation();
+        using var fallback = new FakeRateLimiter(permitLimit: 1);
+        using var limiter = new ResilientRateLimiter(primary, fallback, Options(), new FakeTimeProvider());
+        using var caller = new CancellationTokenSource();
+
+        var pending = limiter.AcquireAsync(1, caller.Token).AsTask();
+        await caller.CancelAsync();
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => pending);
+
+        primary.Release();
+
+        var deadline = DateTime.UtcNow.AddSeconds(5);
+
+        while (primary.LeasesDisposed == 0 && DateTime.UtcNow < deadline)
+        {
+            await Task.Delay(10, TestContext.Current.CancellationToken);
+        }
+
+        Assert.Equal(1, primary.LeasesDisposed);
+    }
+
+    [Fact]
     public async Task Admits_the_request_when_configured_to_fail_open()
     {
         using var primary = new FakeRateLimiter().AlwaysFail(new InvalidDataException("store down"));

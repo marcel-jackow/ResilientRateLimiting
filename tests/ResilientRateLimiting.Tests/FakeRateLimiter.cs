@@ -82,6 +82,9 @@ public sealed class FakeRateLimiter(int permitLimit = int.MaxValue) : RateLimite
             else
             {
                 await hang.Task.ConfigureAwait(false);
+
+                // A real client blocking on the token touches its wait handle when it resumes.
+                _ = cancellationToken.WaitHandle.WaitOne(0);
             }
         }
 

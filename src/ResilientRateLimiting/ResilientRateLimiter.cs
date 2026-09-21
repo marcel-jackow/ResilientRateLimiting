@@ -160,22 +160,43 @@ public sealed class ResilientRateLimiter : RateLimiter
 
     private async ValueTask<RateLimitLease> RaceAgainstCutoffAsync(int permitCount, CancellationToken token)
     {
-        using var storeToken = CancellationTokenSource.CreateLinkedTokenSource(token);
+        var storeToken = CancellationTokenSource.CreateLinkedTokenSource(token);
+        var abandoned = false;
 
-        var storeCall = _primary.AcquireAsync(permitCount, storeToken.Token).AsTask();
-        var expired = Task.Delay(_storeTimeout, _timeProvider, storeToken.Token);
-
-        if (await Task.WhenAny(storeCall, expired).ConfigureAwait(false) == storeCall)
+        try
         {
-            await storeToken.CancelAsync().ConfigureAwait(false);
-            return await storeCall.ConfigureAwait(false);
+            var storeCall = _primary.AcquireAsync(permitCount, storeToken.Token).AsTask();
+            var expired = Task.Delay(_storeTimeout, _timeProvider, storeToken.Token);
+
+            if (await Task.WhenAny(storeCall, expired).ConfigureAwait(false) == storeCall)
+            {
+                await storeToken.CancelAsync().ConfigureAwait(false);
+                return await storeCall.ConfigureAwait(false);
+            }
+
+            // From here the source belongs to the continuation, which outlives this method.
+            abandoned = true;
+
+            try
+            {
+                await storeToken.CancelAsync().ConfigureAwait(false);
+            }
+            finally
+            {
+                Abandon(storeCall, storeToken);
+            }
+
+            token.ThrowIfCancellationRequested();
+
+            throw new TimeoutRejectedException($"The store did not answer within {_storeTimeout}.");
         }
-
-        Abandon(storeCall);
-        await storeToken.CancelAsync().ConfigureAwait(false);
-        token.ThrowIfCancellationRequested();
-
-        throw new TimeoutRejectedException($"The store did not answer within {_storeTimeout}.");
+        finally
+        {
+            if (!abandoned)
+            {
+                storeToken.Dispose();
+            }
+        }
     }
 
     /// <summary>Mirrors an admitted request in the local counter and discards the answer.</summary>
@@ -190,9 +211,9 @@ public sealed class ResilientRateLimiter : RateLimiter
         Interlocked.Exchange(ref _lastLocalConsumption, _timeProvider.GetTimestamp());
     }
 
-    private static void Abandon(Task<RateLimitLease> storeCall) =>
+    private static void Abandon(Task<RateLimitLease> storeCall, CancellationTokenSource storeToken) =>
         _ = storeCall.ContinueWith(
-            static completed =>
+            static (completed, state) =>
             {
                 try
                 {
@@ -208,7 +229,12 @@ public sealed class ResilientRateLimiter : RateLimiter
                     // The caller was served from the fallback; a failure releasing an abandoned
                     // lease has nowhere useful to go.
                 }
+                finally
+                {
+                    ((CancellationTokenSource)state!).Dispose();
+                }
             },
+            storeToken,
             CancellationToken.None,
             TaskContinuationOptions.None,
             TaskScheduler.Default);
