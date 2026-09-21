@@ -353,6 +353,19 @@ public class ResilientRateLimiterTests
     }
 
     [Fact]
+    public void Refuses_a_concurrency_limiter_as_the_fallback()
+    {
+        using var primary = new FakeRateLimiter();
+        using var fallback = new ConcurrencyLimiter(
+            new ConcurrencyLimiterOptions { PermitLimit = 5, QueueLimit = 0 });
+
+        var error = Assert.Throws<ArgumentException>(() =>
+            new ResilientRateLimiter(primary, fallback, Options(), new FakeTimeProvider()));
+
+        Assert.Equal("fallback", error.ParamName);
+    }
+
+    [Fact]
     public void Refuses_an_invalid_configuration()
     {
         using var primary = new FakeRateLimiter();

@@ -43,6 +43,13 @@ public sealed class ResilientRateLimiter : RateLimiter
             ArgumentNullException.ThrowIfNull(fallback);
         }
 
+        if (fallback is ConcurrencyLimiter)
+        {
+            throw new ArgumentException(
+                "A ConcurrencyLimiter cannot serve as the local fallback: its leases return the permit on dispose, so no warm state can be held.",
+                nameof(fallback));
+        }
+
         _primary = primary;
         _fallback = fallback;
         _failureBehavior = options.FailureBehavior;
