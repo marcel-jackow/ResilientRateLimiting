@@ -104,6 +104,36 @@ public class ResilientRateLimiterTests
     }
 
     [Fact]
+    public async Task A_store_answer_arriving_after_the_cutoff_is_released()
+    {
+        var clock = new FakeTimeProvider();
+        using var primary = new FakeRateLimiter(permitLimit: 1).HangIgnoringCancellation();
+        using var fallback = new FakeRateLimiter(permitLimit: 1);
+        using var limiter = new ResilientRateLimiter(primary, fallback, Options(), clock);
+
+        var pending = limiter.AcquireAsync(1, TestContext.Current.CancellationToken).AsTask();
+        clock.Advance(TimeSpan.FromMilliseconds(25));
+
+        using (var lease = await pending)
+        {
+            Assert.Equal(LeaseSource.LocalFallback, SourceOf(lease));
+        }
+
+        Assert.Equal(0, primary.LeasesDisposed);
+
+        primary.Release();
+
+        var deadline = DateTime.UtcNow.AddSeconds(5);
+
+        while (primary.LeasesDisposed == 0 && DateTime.UtcNow < deadline)
+        {
+            await Task.Delay(10, TestContext.Current.CancellationToken);
+        }
+
+        Assert.Equal(1, primary.LeasesDisposed);
+    }
+
+    [Fact]
     public async Task Caller_cancellation_propagates_even_when_the_store_ignores_it()
     {
         using var primary = new FakeRateLimiter().HangIgnoringCancellation();

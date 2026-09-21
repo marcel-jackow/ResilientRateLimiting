@@ -16,7 +16,10 @@ public sealed class RedisFixture : IAsyncLifetime
 
     public async ValueTask DisposeAsync() => await _container.DisposeAsync();
 
-    /// <summary>A connection of its own per simulated replica.</summary>
+    /// <summary>
+    /// A connection of its own per simulated replica, so each limiter behaves like a separate
+    /// process rather than sharing one multiplexer's command pipeline.
+    /// </summary>
     public Task<ConnectionMultiplexer> ConnectAsync() => ConnectionMultiplexer.ConnectAsync(ConnectionString);
 }
 

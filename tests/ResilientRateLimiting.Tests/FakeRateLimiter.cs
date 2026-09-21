@@ -12,9 +12,13 @@ public sealed class FakeRateLimiter(int permitLimit = int.MaxValue) : RateLimite
     private TaskCompletionSource? _hang;
     private bool _observeCancellation = true;
 
+    private int _leasesDisposed;
+
     public int AcquireAttempts { get; private set; }
 
     public int DisposeCount { get; private set; }
+
+    public int LeasesDisposed => Volatile.Read(ref _leasesDisposed);
 
     public int AvailablePermits
     {
@@ -96,15 +100,15 @@ public sealed class FakeRateLimiter(int permitLimit = int.MaxValue) : RateLimite
         {
             if (_available < permitCount)
             {
-                return new FakeLease(false, RetryAfter);
+                return new FakeLease(this, false, RetryAfter);
             }
 
             _available -= permitCount;
-            return new FakeLease(true, null);
+            return new FakeLease(this, true, null);
         }
     }
 
-    private sealed class FakeLease(bool acquired, TimeSpan? retryAfter) : RateLimitLease
+    private sealed class FakeLease(FakeRateLimiter owner, bool acquired, TimeSpan? retryAfter) : RateLimitLease
     {
         public override bool IsAcquired => acquired;
 
@@ -122,5 +126,7 @@ public sealed class FakeRateLimiter(int permitLimit = int.MaxValue) : RateLimite
             metadata = null;
             return false;
         }
+
+        protected override void Dispose(bool disposing) => Interlocked.Increment(ref owner._leasesDisposed);
     }
 }
