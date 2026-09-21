@@ -84,10 +84,20 @@ public class StoreHealthTests
             (await limiter.AcquireAsync(1, TestContext.Current.CancellationToken)).Dispose();
         }
 
+        var attemptsWhenOpened = primary.AcquireAttempts;
+
+        using (var whileOpen = await limiter.AcquireAsync(1, TestContext.Current.CancellationToken))
+        {
+            Assert.Equal(LeaseSource.LocalFallback, SourceOf(whileOpen));
+        }
+
+        Assert.Equal(attemptsWhenOpened, primary.AcquireAttempts);
+
         clock.Advance(TimeSpan.FromSeconds(6));
         using var probe = await limiter.AcquireAsync(1, TestContext.Current.CancellationToken);
 
         Assert.Equal(LeaseSource.Distributed, SourceOf(probe));
+        Assert.Equal(attemptsWhenOpened + 1, primary.AcquireAttempts);
     }
 
     [Fact]
