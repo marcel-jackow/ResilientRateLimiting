@@ -83,6 +83,27 @@ public class ResilientRateLimiterTests
     }
 
     [Fact]
+    public async Task Falls_back_when_the_store_ignores_cancellation_entirely()
+    {
+        var clock = new FakeTimeProvider();
+        using var primary = new FakeRateLimiter().HangIgnoringCancellation();
+        using var fallback = new FakeRateLimiter(permitLimit: 1);
+        using var limiter = new ResilientRateLimiter(primary, fallback, Options(), clock);
+
+        var pending = limiter.AcquireAsync(1, TestContext.Current.CancellationToken).AsTask();
+        Assert.False(pending.IsCompleted);
+
+        clock.Advance(TimeSpan.FromMilliseconds(25));
+
+        using var lease = await pending;
+
+        Assert.True(lease.IsAcquired);
+        Assert.Equal(LeaseSource.LocalFallback, SourceOf(lease));
+
+        primary.Release();
+    }
+
+    [Fact]
     public async Task Admits_the_request_when_configured_to_fail_open()
     {
         using var primary = new FakeRateLimiter().AlwaysFail(new InvalidDataException("store down"));

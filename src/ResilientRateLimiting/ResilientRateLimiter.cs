@@ -55,11 +55,7 @@ public sealed class ResilientRateLimiter : RateLimiter
     {
         try
         {
-            var lease = await _pipeline
-                .ExecuteAsync(
-                    async token => await _primary.AcquireAsync(permitCount, token).ConfigureAwait(false),
-                    cancellationToken)
-                .ConfigureAwait(false);
+            var lease = await AcquireFromStoreAsync(permitCount, cancellationToken).ConfigureAwait(false);
 
             return new ResilientRateLimitLease(lease, LeaseSource.Distributed);
         }
@@ -86,6 +82,42 @@ public sealed class ResilientRateLimiter : RateLimiter
         new ResiliencePipelineBuilder<RateLimitLease> { TimeProvider = _timeProvider }
             .AddTimeout(new TimeoutStrategyOptions { Timeout = _options.StoreTimeout })
             .Build();
+
+    private async Task<RateLimitLease> AcquireFromStoreAsync(int permitCount, CancellationToken cancellationToken)
+    {
+        var storeCall = _pipeline
+            .ExecuteAsync(
+                async token => await _primary.AcquireAsync(permitCount, token).ConfigureAwait(false),
+                cancellationToken)
+            .AsTask();
+
+        using var cutoff = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        var expired = Task.Delay(_options.StoreTimeout, _timeProvider, cutoff.Token);
+
+        if (await Task.WhenAny(storeCall, expired).ConfigureAwait(false) == storeCall)
+        {
+            await cutoff.CancelAsync().ConfigureAwait(false);
+            return await storeCall.ConfigureAwait(false);
+        }
+
+        Abandon(storeCall);
+        throw new TimeoutRejectedException($"The store did not answer within {_options.StoreTimeout}.");
+    }
+
+    private static void Abandon(Task<RateLimitLease> storeCall) =>
+        _ = storeCall.ContinueWith(
+            static completed =>
+            {
+                _ = completed.Exception;
+
+                if (completed.Status == TaskStatus.RanToCompletion)
+                {
+                    completed.Result.Dispose();
+                }
+            },
+            CancellationToken.None,
+            TaskContinuationOptions.ExecuteSynchronously,
+            TaskScheduler.Default);
 
     private async ValueTask<RateLimitLease> FallbackAsync(CancellationToken cancellationToken) =>
         _failureBehavior switch

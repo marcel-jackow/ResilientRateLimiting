@@ -11,6 +11,7 @@ public sealed class FakeRateLimiter(int permitLimit = int.MaxValue) : RateLimite
     private int _remainingFailures;
     private Exception? _failure;
     private TaskCompletionSource? _hang;
+    private bool _observeCancellation = true;
 
     public int AcquireAttempts { get; private set; }
 
@@ -46,6 +47,13 @@ public sealed class FakeRateLimiter(int permitLimit = int.MaxValue) : RateLimite
         return this;
     }
 
+    public FakeRateLimiter HangIgnoringCancellation()
+    {
+        _hang = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        _observeCancellation = false;
+        return this;
+    }
+
     public void Release() => _hang?.TrySetResult();
 
     public void Replenish()
@@ -64,7 +72,14 @@ public sealed class FakeRateLimiter(int permitLimit = int.MaxValue) : RateLimite
 
         if (_hang is { } hang)
         {
-            await hang.Task.WaitAsync(cancellationToken).ConfigureAwait(false);
+            if (_observeCancellation)
+            {
+                await hang.Task.WaitAsync(cancellationToken).ConfigureAwait(false);
+            }
+            else
+            {
+                await hang.Task.ConfigureAwait(false);
+            }
         }
 
         if (_remainingFailures > 0)
