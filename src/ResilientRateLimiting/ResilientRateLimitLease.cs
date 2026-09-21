@@ -6,7 +6,8 @@ namespace ResilientRateLimiting;
 public sealed class ResilientRateLimitLease : RateLimitLease
 {
     /// <summary>Metadata key carrying the <see cref="LeaseSource"/> of this lease.</summary>
-    public const string SourceMetadataName = "RESILIENCE_SOURCE";
+    public static readonly MetadataName<LeaseSource> SourceMetadata =
+        MetadataName.Create<LeaseSource>("ResilientRateLimiting.Source");
 
     private readonly RateLimitLease _inner;
     private readonly TimeSpan? _retryAfter;
@@ -42,9 +43,9 @@ public sealed class ResilientRateLimitLease : RateLimitLease
                 yield return name;
             }
 
-            if (!innerNames.Contains(SourceMetadataName))
+            if (!innerNames.Contains(SourceMetadata.Name))
             {
-                yield return SourceMetadataName;
+                yield return SourceMetadata.Name;
             }
 
             if (_retryAfter is not null && !innerNames.Contains(MetadataName.RetryAfter.Name))
@@ -57,7 +58,7 @@ public sealed class ResilientRateLimitLease : RateLimitLease
     /// <inheritdoc />
     public override bool TryGetMetadata(string metadataName, out object? metadata)
     {
-        if (metadataName == SourceMetadataName)
+        if (metadataName == SourceMetadata.Name)
         {
             metadata = Source;
             return true;

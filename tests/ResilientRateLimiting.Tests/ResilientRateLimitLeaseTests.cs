@@ -61,7 +61,7 @@ public class ResilientRateLimitLeaseTests
             [
                 "CUSTOM_ONE",
                 "CUSTOM_TWO",
-                ResilientRateLimitLease.SourceMetadataName,
+                ResilientRateLimitLease.SourceMetadata.Name,
                 MetadataName.RetryAfter.Name,
             ],
             names);
@@ -74,12 +74,12 @@ public class ResilientRateLimitLeaseTests
     public void Does_not_repeat_a_name_the_inner_lease_already_reports()
     {
         using var lease = new ResilientRateLimitLease(
-            new StubLease(acquired: true, ownNames: [ResilientRateLimitLease.SourceMetadataName]),
+            new StubLease(acquired: true, ownNames: [ResilientRateLimitLease.SourceMetadata.Name]),
             LeaseSource.LocalFallback);
 
         var names = lease.MetadataNames.ToArray();
 
-        Assert.Equal(1, names.Count(name => name == ResilientRateLimitLease.SourceMetadataName));
+        Assert.Equal(1, names.Count(name => name == ResilientRateLimitLease.SourceMetadata.Name));
     }
 
     [Fact]
@@ -89,9 +89,15 @@ public class ResilientRateLimitLeaseTests
 
         Assert.True(lease.IsAcquired);
         Assert.Equal(LeaseSource.LocalFallback, lease.Source);
-        Assert.True(lease.TryGetMetadata(ResilientRateLimitLease.SourceMetadataName, out var source));
+        Assert.True(lease.TryGetMetadata(ResilientRateLimitLease.SourceMetadata, out var source));
         Assert.Equal(LeaseSource.LocalFallback, source);
-        Assert.Contains(ResilientRateLimitLease.SourceMetadataName, lease.MetadataNames);
+        Assert.Contains(ResilientRateLimitLease.SourceMetadata.Name, lease.MetadataNames);
+    }
+
+    [Fact]
+    public void Publishes_a_namespaced_metadata_key()
+    {
+        Assert.Equal("ResilientRateLimiting.Source", ResilientRateLimitLease.SourceMetadata.Name);
     }
 
     [Fact]

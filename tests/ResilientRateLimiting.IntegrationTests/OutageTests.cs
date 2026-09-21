@@ -50,7 +50,7 @@ public class OutageTests : IAsyncLifetime
         using (var healthy = await limiter.AcquireAsync(1, cancellationToken))
         {
             Assert.True(healthy.IsAcquired);
-            Assert.True(healthy.TryGetMetadata(ResilientRateLimitLease.SourceMetadataName, out var source));
+            Assert.True(healthy.TryGetMetadata(ResilientRateLimitLease.SourceMetadata, out var source));
             Assert.Equal(LeaseSource.Distributed, source);
         }
 
@@ -64,9 +64,9 @@ public class OutageTests : IAsyncLifetime
         {
             using var lease = await limiter.AcquireAsync(1, cancellationToken);
 
-            Assert.True(lease.TryGetMetadata(ResilientRateLimitLease.SourceMetadataName, out var source));
+            Assert.True(lease.TryGetMetadata(ResilientRateLimitLease.SourceMetadata, out var source));
 
-            if ((LeaseSource)source! == LeaseSource.LocalFallback)
+            if (source == LeaseSource.LocalFallback)
             {
                 degraded++;
             }

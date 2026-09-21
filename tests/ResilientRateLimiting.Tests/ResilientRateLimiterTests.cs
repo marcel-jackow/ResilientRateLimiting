@@ -16,8 +16,8 @@ public class ResilientRateLimiterTests
 
     private static LeaseSource SourceOf(RateLimitLease lease)
     {
-        Assert.True(lease.TryGetMetadata(ResilientRateLimitLease.SourceMetadataName, out var source));
-        return Assert.IsType<LeaseSource>(source);
+        Assert.True(lease.TryGetMetadata(ResilientRateLimitLease.SourceMetadata, out var source));
+        return source;
     }
 
     [Fact]
@@ -203,7 +203,7 @@ public class ResilientRateLimiterTests
         using var lease = limiter.AttemptAcquire(1);
 
         Assert.False(lease.IsAcquired);
-        Assert.False(lease.TryGetMetadata(ResilientRateLimitLease.SourceMetadataName, out _));
+        Assert.False(lease.TryGetMetadata(ResilientRateLimitLease.SourceMetadata, out _));
         Assert.Equal(10, primary.AvailablePermits);
         Assert.Equal(10, fallback.AvailablePermits);
     }
