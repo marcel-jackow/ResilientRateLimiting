@@ -62,6 +62,11 @@ public sealed class ResilientRateLimiter : RateLimiter
         {
             var lease = await AcquireFromStoreAsync(permitCount, cancellationToken).ConfigureAwait(false);
 
+            if (lease.IsAcquired)
+            {
+                ConsumeLocalPermit(permitCount);
+            }
+
             return new ResilientRateLimitLease(lease, LeaseSource.Distributed);
         }
         catch (Exception exception) when (StoreFailureClassifier.IsStoreFailure(exception, _options))
@@ -129,6 +134,17 @@ public sealed class ResilientRateLimiter : RateLimiter
         token.ThrowIfCancellationRequested();
 
         throw new TimeoutRejectedException($"The store did not answer within {_storeTimeout}.");
+    }
+
+    /// <summary>Mirrors an admitted request in the local counter and discards the answer.</summary>
+    private void ConsumeLocalPermit(int permitCount)
+    {
+        if (_fallback is null)
+        {
+            return;
+        }
+
+        using var warm = _fallback.AttemptAcquire(permitCount);
     }
 
     private static void Abandon(Task<RateLimitLease> storeCall) =>

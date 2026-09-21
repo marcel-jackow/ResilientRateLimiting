@@ -19,6 +19,7 @@ public class OutageTests : IAsyncLifetime
     {
         const int RequestsDuringOutage = 20;
         const int LocalBudget = 10;
+        const int HealthyRequestsBeforeOutage = 1;
         var partitionKey = $"outage-{Guid.NewGuid():N}";
         var cancellationToken = TestContext.Current.CancellationToken;
 
@@ -81,7 +82,7 @@ public class OutageTests : IAsyncLifetime
         Assert.Equal(RequestsDuringOutage, degraded);
 
         // And protection did not disappear: the local budget still bounded what got through.
-        Assert.Equal(LocalBudget, admitted);
+        Assert.Equal(LocalBudget - HealthyRequestsBeforeOutage, admitted);
 
         await connection.DisposeAsync();
     }
