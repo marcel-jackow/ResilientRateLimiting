@@ -18,18 +18,6 @@ public class FakeRateLimiterTests
     }
 
     [Fact]
-    public async Task Replenish_restores_the_full_budget()
-    {
-        using var limiter = new FakeRateLimiter(permitLimit: 3);
-        await limiter.AcquireAsync(1, TestContext.Current.CancellationToken);
-        await limiter.AcquireAsync(1, TestContext.Current.CancellationToken);
-
-        limiter.Replenish();
-
-        Assert.Equal(3, limiter.AvailablePermits);
-    }
-
-    [Fact]
     public async Task Fails_the_scripted_number_of_calls_then_recovers()
     {
         using var limiter = new FakeRateLimiter().FailTimes(2, new InvalidDataException("store down"));

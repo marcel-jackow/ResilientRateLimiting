@@ -2,11 +2,10 @@ using System.Threading.RateLimiting;
 
 namespace ResilientRateLimiting.Tests;
 
-/// <summary>Counts deterministically; fails, hangs or recovers on command. Refill is <see cref="Replenish"/>, not a clock.</summary>
+/// <summary>Counts deterministically; fails, hangs or recovers on command.</summary>
 public sealed class FakeRateLimiter(int permitLimit = int.MaxValue) : RateLimiter
 {
     private readonly Lock _gate = new();
-    private readonly int _permitLimit = permitLimit;
     private int _available = permitLimit;
     private int _remainingFailures;
     private Exception? _failure;
@@ -57,14 +56,6 @@ public sealed class FakeRateLimiter(int permitLimit = int.MaxValue) : RateLimite
     }
 
     public void Release() => _hang?.TrySetResult();
-
-    public void Replenish()
-    {
-        lock (_gate)
-        {
-            _available = _permitLimit;
-        }
-    }
 
     protected override void Dispose(bool disposing)
     {
