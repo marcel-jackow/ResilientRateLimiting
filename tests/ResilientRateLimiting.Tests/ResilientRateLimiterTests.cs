@@ -347,6 +347,32 @@ public class ResilientRateLimiterTests
     }
 
     [Fact]
+    public void Disposing_disposes_a_fallback_the_behaviour_never_consults()
+    {
+        var options = Options(StoreFailureBehavior.FailOpen);
+        var primary = new FakeRateLimiter(permitLimit: 1);
+        var fallback = new FakeRateLimiter(permitLimit: 1);
+        var limiter = new ResilientRateLimiter(primary, fallback, options, new StoreHealth(options, _clock), _clock);
+
+        limiter.Dispose();
+
+        Assert.Equal(1, fallback.DisposeCount);
+    }
+
+    [Fact]
+    public async Task Disposing_asynchronously_disposes_a_fallback_the_behaviour_never_consults()
+    {
+        var options = Options(StoreFailureBehavior.FailClosed);
+        var primary = new FakeRateLimiter(permitLimit: 1);
+        var fallback = new FakeRateLimiter(permitLimit: 1);
+        var limiter = new ResilientRateLimiter(primary, fallback, options, new StoreHealth(options, _clock), _clock);
+
+        await limiter.DisposeAsync();
+
+        Assert.Equal(1, fallback.DisposeCount);
+    }
+
+    [Fact]
     public void Refuses_to_be_built_without_a_fallback_when_one_is_required()
     {
         using var primary = new FakeRateLimiter();

@@ -168,6 +168,29 @@ public class ColdStartTests
     }
 
     [Fact]
+    public async Task A_permit_count_that_overflows_the_scaled_charge_is_rejected_rather_than_thrown()
+    {
+        var options = Options(0.5);
+        using var primary = new FakeRateLimiter().AlwaysFail(new InvalidDataException("store down"));
+        using var fallback = new FixedWindowRateLimiter(new FixedWindowRateLimiterOptions
+        {
+            PermitLimit = 4,
+            Window = TimeSpan.FromMinutes(1),
+            QueueLimit = 0,
+            AutoReplenishment = false,
+        });
+        using var limiter = new ResilientRateLimiter(primary, fallback, options, new StoreHealth(options, _clock), _clock);
+
+        // Doubling this count does not fit in an int. The conversion saturates on this runtime, so
+        // the test pins the outcome a caller sees, not the clamp itself.
+        using var lease = await limiter.AcquireAsync((int.MaxValue / 2) + 1, TestContext.Current.CancellationToken);
+
+        Assert.False(lease.IsAcquired);
+        Assert.True(lease.TryGetMetadata(ResilientRateLimitLease.SourceMetadata, out var source));
+        Assert.Equal(LeaseSource.LocalFallback, source);
+    }
+
+    [Fact]
     public async Task Cold_start_ends_for_every_limiter_sharing_the_store()
     {
         var options = Options(0.5);
