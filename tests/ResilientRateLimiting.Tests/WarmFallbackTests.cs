@@ -96,6 +96,28 @@ public class WarmFallbackTests
     }
 
     [Fact]
+    public async Task A_request_above_the_local_budget_is_rejected_when_the_store_is_down()
+    {
+        using var primary = new FakeRateLimiter(permitLimit: 100).AlwaysFail(new InvalidDataException("store down"));
+        using var fallback = new TokenBucketRateLimiter(new TokenBucketRateLimiterOptions
+        {
+            TokenLimit = 34,
+            TokensPerPeriod = 34,
+            ReplenishmentPeriod = TimeSpan.FromMinutes(1),
+            QueueLimit = 0,
+            AutoReplenishment = false,
+        });
+        using var limiter = new ResilientRateLimiter(primary, fallback, Options(), new StoreHealth(Options(), _clock), _clock);
+
+        // The per-replica budget is smaller than the shared one by construction, so a request the
+        // store would have granted can be above everything the fallback can ever hand out.
+        using var lease = await limiter.AcquireAsync(50, TestContext.Current.CancellationToken);
+
+        Assert.False(lease.IsAcquired);
+        Assert.Equal(LeaseSource.LocalFallback, SourceOf(lease));
+    }
+
+    [Fact]
     public async Task A_throwing_fallback_does_not_fail_a_request_the_store_allowed()
     {
         using var primary = new FakeRateLimiter(permitLimit: 10);

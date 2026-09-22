@@ -278,32 +278,41 @@ public class ChainedRecoveryTests
     }
 
     [Fact]
-    public async Task Concurrent_requests_during_recovery_each_charge_one_permit()
+    public async Task Concurrent_requests_during_recovery_admit_exactly_the_local_budget()
     {
         var clock = new FakeTimeProvider();
         var options = Options();
         using var primary = new FakeRateLimiter(permitLimit: 1000).FailTimes(2, new InvalidDataException("blip"));
-        using var fallback = new FakeRateLimiter(permitLimit: 100);
+        using var fallback = new FixedWindowRateLimiter(new FixedWindowRateLimiterOptions
+        {
+            PermitLimit = 10,
+            Window = TimeSpan.FromMinutes(1),
+            QueueLimit = 0,
+            AutoReplenishment = false,
+        });
         using var limiter = new ResilientRateLimiter(primary, fallback, options, new StoreHealth(options, clock), clock);
         var cancellationToken = TestContext.Current.CancellationToken;
 
+        // The outage spends two permits, the probe warms a third: seven are left for the window.
         (await limiter.AcquireAsync(1, cancellationToken)).Dispose();
         (await limiter.AcquireAsync(1, cancellationToken)).Dispose();
 
         clock.Advance(TimeSpan.FromSeconds(6));
         (await limiter.AcquireAsync(1, cancellationToken)).Dispose();
 
-        var before = fallback.AvailablePermits;
         primary.AlwaysFail(new InvalidDataException("down again"));
 
         var leases = await Task.WhenAll(Enumerable.Range(0, 8)
             .Select(_ => Task.Run(async () => await limiter.AcquireAsync(1, cancellationToken), cancellationToken)));
 
+        var admitted = leases.Count(lease => lease.IsAcquired);
+
         foreach (var lease in leases)
         {
+            Assert.Equal(LeaseSource.LocalFallback, SourceOf(lease));
             lease.Dispose();
         }
 
-        Assert.Equal(before - 8, fallback.AvailablePermits);
+        Assert.Equal(7, admitted);
     }
 }

@@ -40,7 +40,13 @@ public sealed class StoreHealth
     /// <summary>Whether any limiter on this store connection has had an answer from the store.</summary>
     internal bool HasBeenReached => Volatile.Read(ref _reached) == 1;
 
-    internal void MarkReached() => Volatile.Write(ref _reached, 1);
+    internal void MarkReached()
+    {
+        if (Volatile.Read(ref _reached) == 0)
+        {
+            Volatile.Write(ref _reached, 1);
+        }
+    }
 
     internal void RegisterPartition() => Interlocked.Increment(ref _livePartitions);
 

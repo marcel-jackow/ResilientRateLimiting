@@ -110,6 +110,29 @@ public class ColdStartTests
     }
 
     [Fact]
+    public async Task A_permit_count_above_the_local_limit_is_rejected_rather_than_thrown()
+    {
+        var options = Options(0.5);
+        using var primary = new FakeRateLimiter().AlwaysFail(new InvalidDataException("store down"));
+        using var fallback = new FixedWindowRateLimiter(new FixedWindowRateLimiterOptions
+        {
+            PermitLimit = 4,
+            Window = TimeSpan.FromMinutes(1),
+            QueueLimit = 0,
+            AutoReplenishment = false,
+        });
+        using var limiter = new ResilientRateLimiter(primary, fallback, options, new StoreHealth(options, _clock), _clock);
+
+        // Neither the scaled charge (10) nor the plain one (5) can ever be granted by a limiter
+        // whose whole budget is 4. A real RateLimiter throws for both.
+        using var lease = await limiter.AcquireAsync(5, TestContext.Current.CancellationToken);
+
+        Assert.False(lease.IsAcquired);
+        Assert.True(lease.TryGetMetadata(ResilientRateLimitLease.SourceMetadata, out var source));
+        Assert.Equal(LeaseSource.LocalFallback, source);
+    }
+
+    [Fact]
     public async Task Cold_start_ends_for_every_limiter_sharing_the_store()
     {
         var options = Options(0.5);

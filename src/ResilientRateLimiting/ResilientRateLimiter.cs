@@ -381,21 +381,31 @@ public sealed class ResilientRateLimiter : RateLimiter
     private async ValueTask<RateLimitLease> AcquireFromFallbackAsync(int permitCount, CancellationToken cancellationToken)
     {
         var permits = ColdStartPermits(permitCount);
-        RateLimitLease lease;
+        var lease = await TryAcquireLocallyAsync(permits, cancellationToken).ConfigureAwait(false);
 
-        try
+        if (lease is null && permits != permitCount)
         {
-            lease = await _fallback!.AcquireAsync(permits, cancellationToken).ConfigureAwait(false);
-        }
-        catch (ArgumentOutOfRangeException) when (permits != permitCount)
-        {
-            // The scaled charge is above anything the local limiter can ever grant, and a limiter
-            // that throws where it used to answer is the failure this library exists to remove.
-            lease = await _fallback!.AcquireAsync(permitCount, cancellationToken).ConfigureAwait(false);
+            lease = await TryAcquireLocallyAsync(permitCount, cancellationToken).ConfigureAwait(false);
         }
 
         Interlocked.Exchange(ref _lastLocalConsumption, _timeProvider.GetTimestamp());
-        return lease;
+
+        return lease ?? StaticLease.Rejected;
+    }
+
+    /// <summary>Returns <see langword="null"/> when the local limiter cannot grant this many permits at all, which is a rejection rather than a failure of the request.</summary>
+    private async ValueTask<RateLimitLease?> TryAcquireLocallyAsync(int permits, CancellationToken cancellationToken)
+    {
+        try
+        {
+            return await _fallback!.AcquireAsync(permits, cancellationToken).ConfigureAwait(false);
+        }
+        catch (ArgumentOutOfRangeException)
+        {
+            // Every limiter throws above its own permit limit, and the per-replica budget is
+            // smaller than the shared one by construction, so this input is ordinary.
+            return null;
+        }
     }
 
     private int ColdStartPermits(int permitCount)
