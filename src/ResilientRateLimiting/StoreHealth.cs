@@ -9,6 +9,7 @@ public sealed class StoreHealth
 {
     private readonly ResiliencePipeline<RateLimitLease> _pipeline;
     private int _livePartitions;
+    private int _reached;
 
     /// <param name="options">The same options the partitions use.</param>
     /// <param name="timeProvider">Defaults to <see cref="TimeProvider.System"/>.</param>
@@ -35,6 +36,11 @@ public sealed class StoreHealth
     internal ResiliencePipeline<RateLimitLease> Pipeline => _pipeline;
 
     internal int LivePartitions => Volatile.Read(ref _livePartitions);
+
+    /// <summary>Whether any limiter on this store connection has had an answer from the store.</summary>
+    internal bool HasBeenReached => Volatile.Read(ref _reached) == 1;
+
+    internal void MarkReached() => Volatile.Write(ref _reached, 1);
 
     internal void RegisterPartition() => Interlocked.Increment(ref _livePartitions);
 

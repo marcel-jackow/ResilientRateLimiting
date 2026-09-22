@@ -67,7 +67,16 @@ public class ChainedRecoveryTests
         clock.Advance(TimeSpan.FromSeconds(6));
         (await limiter.AcquireAsync(1, cancellationToken)).Dispose();
 
-        clock.Advance(TimeSpan.FromMinutes(1));
+        // Half way into the window the exhausted local counter still suppresses.
+        clock.Advance(TimeSpan.FromSeconds(30));
+
+        using (var suppressed = await limiter.AcquireAsync(1, cancellationToken))
+        {
+            Assert.False(suppressed.IsAcquired);
+            Assert.Equal(LeaseSource.LocalFallback, SourceOf(suppressed));
+        }
+
+        clock.Advance(TimeSpan.FromSeconds(31));
         using var afterRecovery = await limiter.AcquireAsync(1, cancellationToken);
 
         Assert.True(afterRecovery.IsAcquired);
@@ -193,5 +202,108 @@ public class ChainedRecoveryTests
         Assert.True(inRecovery.IsAcquired);
         Assert.Equal(LeaseSource.Distributed, SourceOf(inRecovery));
         Assert.Equal(1, fallback.AvailablePermits);
+    }
+
+    [Fact]
+    public async Task A_request_that_falls_back_during_recovery_is_charged_once()
+    {
+        var clock = new FakeTimeProvider();
+        var options = Options();
+        using var primary = new FakeRateLimiter(permitLimit: 1000).FailTimes(2, new InvalidDataException("blip"));
+        using var fallback = new FakeRateLimiter(permitLimit: 5);
+        using var limiter = new ResilientRateLimiter(primary, fallback, options, new StoreHealth(options, clock), clock);
+        var cancellationToken = TestContext.Current.CancellationToken;
+
+        (await limiter.AcquireAsync(1, cancellationToken)).Dispose();
+        (await limiter.AcquireAsync(1, cancellationToken)).Dispose();
+
+        clock.Advance(TimeSpan.FromSeconds(6));
+        (await limiter.AcquireAsync(1, cancellationToken)).Dispose();
+
+        Assert.Equal(2, fallback.AvailablePermits);
+
+        // The store fails again while this limiter is in recovery: the gate already charged the permit.
+        primary.AlwaysFail(new InvalidDataException("down again"));
+        using var served = await limiter.AcquireAsync(1, cancellationToken);
+
+        Assert.True(served.IsAcquired);
+        Assert.Equal(LeaseSource.LocalFallback, SourceOf(served));
+        Assert.Equal(1, fallback.AvailablePermits);
+    }
+
+    [Fact]
+    public async Task A_fallback_older_than_one_recovery_time_does_not_arm_recovery()
+    {
+        var clock = new FakeTimeProvider();
+        var options = Options();
+        using var primary = new FakeRateLimiter(permitLimit: 1000).FailTimes(2, new InvalidDataException("blip"));
+        using var fallback = new FakeRateLimiter(permitLimit: 1);
+        using var limiter = new ResilientRateLimiter(primary, fallback, options, new StoreHealth(options, clock), clock);
+        var cancellationToken = TestContext.Current.CancellationToken;
+
+        (await limiter.AcquireAsync(1, cancellationToken)).Dispose();
+        (await limiter.AcquireAsync(1, cancellationToken)).Dispose();
+
+        // Nothing happens for far longer than the recovery time, then the store answers again.
+        clock.Advance(TimeSpan.FromMinutes(5));
+        (await limiter.AcquireAsync(1, cancellationToken)).Dispose();
+
+        using var next = await limiter.AcquireAsync(1, cancellationToken);
+
+        Assert.True(next.IsAcquired);
+        Assert.Equal(LeaseSource.Distributed, SourceOf(next));
+    }
+
+    [Fact]
+    public async Task A_recovery_rejection_carries_the_local_limiters_retry_after()
+    {
+        var clock = new FakeTimeProvider();
+        var options = Options();
+        using var primary = new FakeRateLimiter(permitLimit: 1000).FailTimes(2, new InvalidDataException("blip"));
+        using var fallback = new FakeRateLimiter(permitLimit: 1) { RetryAfter = TimeSpan.FromSeconds(30) };
+        using var limiter = new ResilientRateLimiter(primary, fallback, options, new StoreHealth(options, clock), clock);
+        var cancellationToken = TestContext.Current.CancellationToken;
+
+        (await limiter.AcquireAsync(1, cancellationToken)).Dispose();
+        (await limiter.AcquireAsync(1, cancellationToken)).Dispose();
+
+        clock.Advance(TimeSpan.FromSeconds(6));
+        (await limiter.AcquireAsync(1, cancellationToken)).Dispose();
+
+        using var suppressed = await limiter.AcquireAsync(1, cancellationToken);
+
+        Assert.False(suppressed.IsAcquired);
+        Assert.True(suppressed.TryGetMetadata(MetadataName.RetryAfter.Name, out var retryAfter));
+        Assert.Equal(TimeSpan.FromSeconds(30), retryAfter);
+    }
+
+    [Fact]
+    public async Task Concurrent_requests_during_recovery_each_charge_one_permit()
+    {
+        var clock = new FakeTimeProvider();
+        var options = Options();
+        using var primary = new FakeRateLimiter(permitLimit: 1000).FailTimes(2, new InvalidDataException("blip"));
+        using var fallback = new FakeRateLimiter(permitLimit: 100);
+        using var limiter = new ResilientRateLimiter(primary, fallback, options, new StoreHealth(options, clock), clock);
+        var cancellationToken = TestContext.Current.CancellationToken;
+
+        (await limiter.AcquireAsync(1, cancellationToken)).Dispose();
+        (await limiter.AcquireAsync(1, cancellationToken)).Dispose();
+
+        clock.Advance(TimeSpan.FromSeconds(6));
+        (await limiter.AcquireAsync(1, cancellationToken)).Dispose();
+
+        var before = fallback.AvailablePermits;
+        primary.AlwaysFail(new InvalidDataException("down again"));
+
+        var leases = await Task.WhenAll(Enumerable.Range(0, 8)
+            .Select(_ => Task.Run(async () => await limiter.AcquireAsync(1, cancellationToken), cancellationToken)));
+
+        foreach (var lease in leases)
+        {
+            lease.Dispose();
+        }
+
+        Assert.Equal(before - 8, fallback.AvailablePermits);
     }
 }

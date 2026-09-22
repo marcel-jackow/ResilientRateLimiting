@@ -21,8 +21,7 @@ public sealed class ResilientRateLimiter : RateLimiter
     private readonly double _coldStartFactor;
     private long _lastLocalConsumption = long.MinValue;
     private long _recoveryUntil = long.MinValue;
-    private volatile bool _lastCallFellBack;
-    private volatile bool _hasReachedTheStore;
+    private long _lastFallbackAt = long.MinValue;
     private long _lastActivity;
     private int _released;
     private int _inFlight;
@@ -116,24 +115,30 @@ public sealed class ResilientRateLimiter : RateLimiter
 
         try
         {
-            var inRecovery = IsInRecovery();
+            var verdict = LocalVerdict.NotConsulted;
+            TimeSpan? retryAfter = null;
 
-            if (inRecovery && TryRejectDuringRecovery(permitCount) is { } suppressed)
+            if (IsInRecovery())
+            {
+                verdict = ConsultLocalCounter(permitCount, out retryAfter);
+            }
+
+            if (verdict == LocalVerdict.Refused)
             {
                 RecordActivity();
 
-                return suppressed;
+                return new ResilientRateLimitLease(StaticLease.Rejected, LeaseSource.LocalFallback, retryAfter);
             }
 
             try
             {
                 var lease = await AcquireFromStoreAsync(permitCount, cancellationToken).ConfigureAwait(false);
 
-                _hasReachedTheStore = true;
+                _storeHealth.MarkReached();
 
                 RecordActivity();
 
-                if (lease.IsAcquired && !inRecovery)
+                if (lease.IsAcquired && verdict != LocalVerdict.Granted)
                 {
                     ConsumeLocalPermit(permitCount);
                 }
@@ -144,10 +149,12 @@ public sealed class ResilientRateLimiter : RateLimiter
             }
             catch (Exception exception) when (StoreFailureClassifier.IsStoreFailure(exception, _shouldHandle))
             {
-                // Anything thrown from here on has nowhere left to go, and reaches the caller.
-                var served = await FallbackAsync(permitCount, cancellationToken).ConfigureAwait(false);
+                Interlocked.Exchange(ref _lastFallbackAt, _timeProvider.GetTimestamp());
 
-                _lastCallFellBack = true;
+                // Anything thrown from here on has nowhere left to go, and reaches the caller.
+                var served = verdict == LocalVerdict.Granted
+                    ? new ResilientRateLimitLease(StaticLease.Acquired, LeaseSource.LocalFallback)
+                    : await FallbackAsync(permitCount, cancellationToken).ConfigureAwait(false);
 
                 RecordActivity();
 
@@ -254,37 +261,58 @@ public sealed class ResilientRateLimiter : RateLimiter
         return until != long.MinValue && _timeProvider.GetTimestamp() < until;
     }
 
-    /// <summary>Opens recovery mode once a call succeeds after the previous one fell back.</summary>
+    /// <summary>Opens recovery mode when a call succeeds after a fallback within the last recovery time. The claim is consumed atomically, so one outage arms one window.</summary>
     private void ArmRecovery()
     {
-        if (!_warmFallback || !_lastCallFellBack)
+        if (!_warmFallback)
         {
             return;
         }
 
-        _lastCallFellBack = false;
+        var fellBackAt = Interlocked.Exchange(ref _lastFallbackAt, long.MinValue);
 
-        Interlocked.Exchange(
-            ref _recoveryUntil,
-            _timeProvider.GetTimestamp() + (long)(_recoveryTime.TotalSeconds * _timeProvider.TimestampFrequency));
+        if (fellBackAt == long.MinValue || _timeProvider.GetElapsedTime(fellBackAt) >= _recoveryTime)
+        {
+            return;
+        }
+
+        Interlocked.Exchange(ref _recoveryUntil, RecoveryDeadline());
     }
 
-    /// <summary>While recovering, the local counter answers first: it already mirrors what this replica admitted while the store was blind, so honouring its refusal suppresses the overshoot without writing anything back.</summary>
-    private RateLimitLease? TryRejectDuringRecovery(int permitCount)
+    private long RecoveryDeadline()
     {
+        var now = _timeProvider.GetTimestamp();
+        var ticks = _recoveryTime.TotalSeconds * _timeProvider.TimestampFrequency;
+
+        return ticks >= long.MaxValue - now ? long.MaxValue : now + (long)ticks;
+    }
+
+    /// <summary>While recovering, the local counter answers first: it already carries what this replica spent while the store was blind, so honouring its refusal suppresses the overshoot without writing anything back. A grant here is the request's only local charge.</summary>
+    private LocalVerdict ConsultLocalCounter(int permitCount, out TimeSpan? retryAfter)
+    {
+        retryAfter = null;
+
         try
         {
             using var local = _fallback!.AttemptAcquire(permitCount);
             Interlocked.Exchange(ref _lastLocalConsumption, _timeProvider.GetTimestamp());
 
-            return local.IsAcquired
-                ? null
-                : new ResilientRateLimitLease(StaticLease.Rejected, LeaseSource.LocalFallback);
+            if (local.IsAcquired)
+            {
+                return LocalVerdict.Granted;
+            }
+
+            if (local.TryGetMetadata(MetadataName.RetryAfter, out var value))
+            {
+                retryAfter = value;
+            }
+
+            return LocalVerdict.Refused;
         }
         catch
         {
             // A local counter that cannot answer must not reject the request: the store decides.
-            return null;
+            return LocalVerdict.NotConsulted;
         }
     }
 
@@ -349,15 +377,43 @@ public sealed class ResilientRateLimiter : RateLimiter
                 LeaseSource.LocalFallback),
         };
 
-    /// <summary>Charges the local counter more than the caller asked for until this process has once reached the store: an empty counter in a process that has never been answered is not evidence of an empty share.</summary>
+    /// <summary>Charges the local counter more than the caller asked for until some limiter on this store connection has been answered by the store: an empty counter in a process that has never been answered is not evidence of an empty share.</summary>
     private async ValueTask<RateLimitLease> AcquireFromFallbackAsync(int permitCount, CancellationToken cancellationToken)
     {
-        var permits = _hasReachedTheStore
-            ? permitCount
-            : (int)Math.Ceiling(permitCount / _coldStartFactor);
+        var permits = ColdStartPermits(permitCount);
+        RateLimitLease lease;
 
-        var lease = await _fallback!.AcquireAsync(permits, cancellationToken).ConfigureAwait(false);
+        try
+        {
+            lease = await _fallback!.AcquireAsync(permits, cancellationToken).ConfigureAwait(false);
+        }
+        catch (ArgumentOutOfRangeException) when (permits != permitCount)
+        {
+            // The scaled charge is above anything the local limiter can ever grant, and a limiter
+            // that throws where it used to answer is the failure this library exists to remove.
+            lease = await _fallback!.AcquireAsync(permitCount, cancellationToken).ConfigureAwait(false);
+        }
+
         Interlocked.Exchange(ref _lastLocalConsumption, _timeProvider.GetTimestamp());
         return lease;
+    }
+
+    private int ColdStartPermits(int permitCount)
+    {
+        if (_storeHealth.HasBeenReached)
+        {
+            return permitCount;
+        }
+
+        var scaled = Math.Ceiling(permitCount / _coldStartFactor);
+
+        return scaled >= int.MaxValue ? int.MaxValue : (int)scaled;
+    }
+
+    private enum LocalVerdict
+    {
+        NotConsulted,
+        Granted,
+        Refused,
     }
 }

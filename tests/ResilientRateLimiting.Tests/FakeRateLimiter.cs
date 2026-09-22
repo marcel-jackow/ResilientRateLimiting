@@ -17,10 +17,12 @@ public sealed class FakeRateLimiter(int permitLimit = int.MaxValue) : RateLimite
     private bool _touchTokenOnResume;
 
     private int _leasesDisposed;
+    private int _acquireAttempts;
+    private int _disposeCount;
 
-    public int AcquireAttempts { get; private set; }
+    public int AcquireAttempts => Volatile.Read(ref _acquireAttempts);
 
-    public int DisposeCount { get; private set; }
+    public int DisposeCount => Volatile.Read(ref _disposeCount);
 
     public int LeasesDisposed => Volatile.Read(ref _leasesDisposed);
 
@@ -94,7 +96,7 @@ public sealed class FakeRateLimiter(int permitLimit = int.MaxValue) : RateLimite
 
     protected override void Dispose(bool disposing)
     {
-        DisposeCount++;
+        Interlocked.Increment(ref _disposeCount);
         base.Dispose(disposing);
     }
 
@@ -103,7 +105,7 @@ public sealed class FakeRateLimiter(int permitLimit = int.MaxValue) : RateLimite
 
     protected override async ValueTask<RateLimitLease> AcquireAsyncCore(int permitCount, CancellationToken cancellationToken)
     {
-        AcquireAttempts++;
+        Interlocked.Increment(ref _acquireAttempts);
 
         if (_hang is { } hang)
         {
