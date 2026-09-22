@@ -155,6 +155,39 @@ public class ChainedRecoveryTests
     }
 
     [Fact]
+    public async Task Recovery_lets_the_store_answer_a_count_the_local_counter_can_never_grant()
+    {
+        var clock = new FakeTimeProvider();
+        var options = Options();
+        using var primary = new FakeRateLimiter(permitLimit: 1000).FailTimes(2, new InvalidDataException("blip"));
+        using var fallback = new FixedWindowRateLimiter(new FixedWindowRateLimiterOptions
+        {
+            PermitLimit = 4,
+            Window = TimeSpan.FromMinutes(1),
+            QueueLimit = 0,
+            AutoReplenishment = false,
+        });
+        using var limiter = new ResilientRateLimiter(primary, fallback, options, new StoreHealth(options, clock), clock);
+        var cancellationToken = TestContext.Current.CancellationToken;
+
+        (await limiter.AcquireAsync(1, cancellationToken)).Dispose();
+        (await limiter.AcquireAsync(1, cancellationToken)).Dispose();
+
+        clock.Advance(TimeSpan.FromSeconds(6));
+        (await limiter.AcquireAsync(1, cancellationToken)).Dispose();
+
+        var attemptsBefore = primary.AcquireAttempts;
+
+        // The gate can never grant five permits out of a budget of four. The store still can, and
+        // unlike the fallback path it is reachable here, so it decides.
+        using var tooLarge = await limiter.AcquireAsync(5, cancellationToken);
+
+        Assert.True(tooLarge.IsAcquired);
+        Assert.Equal(LeaseSource.Distributed, SourceOf(tooLarge));
+        Assert.Equal(attemptsBefore + 1, primary.AcquireAttempts);
+    }
+
+    [Fact]
     public async Task A_throwing_local_counter_during_recovery_falls_through_to_the_store()
     {
         var clock = new FakeTimeProvider();

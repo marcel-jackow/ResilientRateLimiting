@@ -115,6 +115,7 @@ public class WarmFallbackTests
 
         Assert.False(lease.IsAcquired);
         Assert.Equal(LeaseSource.LocalFallback, SourceOf(lease));
+        Assert.Equal(34, fallback.GetStatistics()!.CurrentAvailablePermits);
     }
 
     [Fact]

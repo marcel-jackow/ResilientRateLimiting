@@ -130,6 +130,41 @@ public class ColdStartTests
         Assert.False(lease.IsAcquired);
         Assert.True(lease.TryGetMetadata(ResilientRateLimitLease.SourceMetadata, out var source));
         Assert.Equal(LeaseSource.LocalFallback, source);
+        Assert.Equal(4, fallback.GetStatistics()!.CurrentAvailablePermits);
+    }
+
+    [Fact]
+    public async Task A_rejection_the_local_limiter_never_saw_holds_no_warm_state()
+    {
+        var options = Options(1.0);
+        using var primary = new FakeRateLimiter().AlwaysFail(new InvalidDataException("store down"));
+        using var fallback = new FixedWindowRateLimiter(new FixedWindowRateLimiterOptions
+        {
+            PermitLimit = 4,
+            Window = TimeSpan.FromMinutes(1),
+            QueueLimit = 0,
+            AutoReplenishment = false,
+        });
+        using var limiter = new ResilientRateLimiter(primary, fallback, options, new StoreHealth(options, _clock), _clock);
+
+        (await limiter.AcquireAsync(5, TestContext.Current.CancellationToken)).Dispose();
+
+        // Nothing was charged and nothing is held, so the partition must be sweepable.
+        Assert.NotNull(limiter.IdleDuration);
+    }
+
+    [Fact]
+    public async Task A_negative_permit_count_is_rejected_by_the_framework_before_this_limiter_sees_it()
+    {
+        var options = Options(0.5);
+        using var primary = new FakeRateLimiter().AlwaysFail(new InvalidDataException("store down"));
+        using var fallback = new FakeRateLimiter(permitLimit: 4);
+        using var limiter = new ResilientRateLimiter(primary, fallback, options, new StoreHealth(options, _clock), _clock);
+
+        await Assert.ThrowsAsync<ArgumentOutOfRangeException>(
+            async () => await limiter.AcquireAsync(-1, TestContext.Current.CancellationToken));
+
+        Assert.Equal(0, primary.AcquireAttempts);
     }
 
     [Fact]

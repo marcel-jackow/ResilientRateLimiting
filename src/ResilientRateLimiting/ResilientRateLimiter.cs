@@ -388,9 +388,15 @@ public sealed class ResilientRateLimiter : RateLimiter
             lease = await TryAcquireLocallyAsync(permitCount, cancellationToken).ConfigureAwait(false);
         }
 
+        if (lease is null)
+        {
+            // The limiter was never entered, so this partition holds no warm state to protect.
+            return StaticLease.Rejected;
+        }
+
         Interlocked.Exchange(ref _lastLocalConsumption, _timeProvider.GetTimestamp());
 
-        return lease ?? StaticLease.Rejected;
+        return lease;
     }
 
     /// <summary>Returns <see langword="null"/> when the local limiter cannot grant this many permits at all, which is a rejection rather than a failure of the request.</summary>
