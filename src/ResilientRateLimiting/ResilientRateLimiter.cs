@@ -17,7 +17,7 @@ public sealed class ResilientRateLimiter : RateLimiter
     private readonly TimeSpan _retention;
     private readonly int _maxWarmPartitions;
     private long _lastLocalConsumption = long.MinValue;
-    private long _lastActivity = long.MinValue;
+    private long _lastActivity;
     private int _released;
     private int _inFlight;
 
@@ -56,6 +56,7 @@ public sealed class ResilientRateLimiter : RateLimiter
         _storeTimeout = options.StoreTimeout;
         _shouldHandle = options.ShouldHandle;
         _timeProvider = timeProvider ?? TimeProvider.System;
+        _lastActivity = _timeProvider.GetTimestamp();
         _storeHealth = storeHealth;
         _retention = options.FallbackRecoveryTime < options.MaxWarmRetention
             ? options.FallbackRecoveryTime
@@ -65,7 +66,7 @@ public sealed class ResilientRateLimiter : RateLimiter
         _storeHealth.RegisterPartition();
     }
 
-    /// <summary>Reports no idle time while a request is in flight, or while local fallback state is still held unless the store's live partition count exceeds <see cref="ResilientRateLimiterOptions.MaxWarmPartitions"/>; otherwise reports how long ago this limiter last served a request.</summary>
+    /// <summary>Reports no idle time while a request is in flight, or while local fallback state is still held unless the store's live partition count exceeds <see cref="ResilientRateLimiterOptions.MaxWarmPartitions"/>; otherwise reports how long ago this limiter last served a request, or was created if it has served none.</summary>
     public override TimeSpan? IdleDuration
     {
         get
@@ -162,14 +163,7 @@ public sealed class ResilientRateLimiter : RateLimiter
         }
     }
 
-    private TimeSpan? OwnIdleDuration()
-    {
-        var lastActivity = Interlocked.Read(ref _lastActivity);
-
-        return lastActivity == long.MinValue
-            ? _primary.IdleDuration
-            : _timeProvider.GetElapsedTime(lastActivity);
-    }
+    private TimeSpan OwnIdleDuration() => _timeProvider.GetElapsedTime(Interlocked.Read(ref _lastActivity));
 
     private void RecordActivity() => Interlocked.Exchange(ref _lastActivity, _timeProvider.GetTimestamp());
 

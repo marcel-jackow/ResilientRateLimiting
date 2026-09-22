@@ -15,13 +15,35 @@ public class IdleDurationTests
     };
 
     [Fact]
-    public void Forwards_the_inner_value_before_any_local_state_exists()
+    public void Reports_its_own_time_since_construction_before_any_request_is_served()
     {
         using var primary = new FakeRateLimiter(permitLimit: 10) { ReportedIdleDuration = TimeSpan.FromMinutes(5) };
         using var fallback = new FakeRateLimiter(permitLimit: 10);
         using var limiter = new ResilientRateLimiter(primary, fallback, Options(), new StoreHealth(Options(), _clock), _clock);
 
-        Assert.Equal(primary.IdleDuration, limiter.IdleDuration);
+        _clock.Advance(TimeSpan.FromSeconds(11));
+
+        Assert.Equal(TimeSpan.FromSeconds(11), limiter.IdleDuration);
+    }
+
+    [Fact]
+    public async Task Reports_its_own_elapsed_time_when_the_first_request_throws_and_the_primary_getter_is_broken()
+    {
+        using var cancelled = new CancellationTokenSource();
+        await cancelled.CancelAsync();
+
+        using var primary = new FakeRateLimiter(permitLimit: 10)
+            .ThrowsOnIdleDuration(new InvalidOperationException("primary idle clock is unusable"));
+        using var fallback = new FakeRateLimiter(permitLimit: 10);
+        using var limiter = new ResilientRateLimiter(primary, fallback, Options(), new StoreHealth(Options(), _clock), _clock);
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(
+            async () => await limiter.AcquireAsync(1, cancelled.Token));
+
+        _clock.Advance(TimeSpan.FromSeconds(11));
+
+        Assert.Equal(TimeSpan.FromSeconds(11), limiter.IdleDuration);
+        Assert.Equal(0, primary.IdleDurationReads);
     }
 
     [Fact]

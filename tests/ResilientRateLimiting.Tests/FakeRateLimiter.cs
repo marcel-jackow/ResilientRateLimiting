@@ -10,6 +10,8 @@ public sealed class FakeRateLimiter(int permitLimit = int.MaxValue) : RateLimite
     private int _remainingFailures;
     private Exception? _failure;
     private Exception? _attemptFailure;
+    private Exception? _idleFailure;
+    private int _idleDurationReads;
     private TaskCompletionSource? _hang;
     private bool _observeCancellation = true;
     private bool _touchTokenOnResume;
@@ -37,7 +39,16 @@ public sealed class FakeRateLimiter(int permitLimit = int.MaxValue) : RateLimite
 
     public TimeSpan? ReportedIdleDuration { get; set; } = TimeSpan.Zero;
 
-    public override TimeSpan? IdleDuration => ReportedIdleDuration;
+    public int IdleDurationReads => Volatile.Read(ref _idleDurationReads);
+
+    public override TimeSpan? IdleDuration
+    {
+        get
+        {
+            Interlocked.Increment(ref _idleDurationReads);
+            return _idleFailure is null ? ReportedIdleDuration : throw _idleFailure;
+        }
+    }
 
     public override RateLimiterStatistics? GetStatistics() => null;
 
@@ -53,6 +64,12 @@ public sealed class FakeRateLimiter(int permitLimit = int.MaxValue) : RateLimite
     public FakeRateLimiter ThrowsOnAttemptAcquire(Exception failure)
     {
         _attemptFailure = failure;
+        return this;
+    }
+
+    public FakeRateLimiter ThrowsOnIdleDuration(Exception failure)
+    {
+        _idleFailure = failure;
         return this;
     }
 
