@@ -32,8 +32,8 @@ internal sealed class LocalMirror : IDisposable, IAsyncDisposable
         _warmRetention = options.FallbackRecoveryTime < options.MaxWarmRetention
             ? options.FallbackRecoveryTime
             : options.MaxWarmRetention;
-        _maxWarmPartitions = options.MaxWarmPartitions;
-        _coldStartFactor = options.ColdStartFallbackFactor;
+        _maxWarmPartitions = storeHealth.Options.MaxWarmPartitions;
+        _coldStartFactor = storeHealth.Options.ColdStartFallbackFactor;
     }
 
     /// <summary>Whether this partition still holds local state worth keeping from the framework's sweep. Reads timestamps and counters only, never the fallback limiter, because a throwing getter aborts the whole sweep.</summary>

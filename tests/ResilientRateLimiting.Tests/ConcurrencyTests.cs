@@ -12,9 +12,10 @@ public class ConcurrencyTests
 
     private static ResilientRateLimiterOptions Options() => new()
     {
-        ExpectedReplicaCount = 3,
         FallbackRecoveryTime = TimeSpan.FromMinutes(1),
     };
+
+    private static StoreHealthOptions StoreOptions() => new() { ExpectedReplicaCount = 3 };
 
     private static FixedWindowRateLimiter LocalCounter(int permitLimit) =>
         new(new FixedWindowRateLimiterOptions
@@ -31,7 +32,7 @@ public class ConcurrencyTests
         var options = Options();
         using var primary = new FakeRateLimiter(permitLimit: 1000);
         using var fallback = LocalCounter(Requests * 2);
-        using var limiter = new ResilientRateLimiter(primary, fallback, options, new StoreHealth(options, _clock), _clock);
+        using var limiter = new ResilientRateLimiter(primary, fallback, options, new StoreHealth(StoreOptions(), _clock), _clock);
         var cancellationToken = TestContext.Current.CancellationToken;
 
         var leases = await Task.WhenAll(Enumerable.Range(0, Requests)
@@ -54,7 +55,7 @@ public class ConcurrencyTests
         var options = Options();
         using var primary = new FakeRateLimiter().AlwaysFail(new InvalidDataException("store down"));
         using var fallback = LocalCounter(Requests / 4);
-        using var limiter = new ResilientRateLimiter(primary, fallback, options, new StoreHealth(options, _clock), _clock);
+        using var limiter = new ResilientRateLimiter(primary, fallback, options, new StoreHealth(StoreOptions(), _clock), _clock);
         var cancellationToken = TestContext.Current.CancellationToken;
 
         var leases = await Task.WhenAll(Enumerable.Range(0, Requests)
@@ -76,7 +77,7 @@ public class ConcurrencyTests
         var options = Options();
         using var primary = new FakeRateLimiter(permitLimit: 1000).HangUntilReleased();
         using var fallback = LocalCounter(Requests);
-        using var limiter = new ResilientRateLimiter(primary, fallback, options, new StoreHealth(options, _clock), _clock);
+        using var limiter = new ResilientRateLimiter(primary, fallback, options, new StoreHealth(StoreOptions(), _clock), _clock);
         var cancellationToken = TestContext.Current.CancellationToken;
 
         var pending = Enumerable.Range(0, Requests)

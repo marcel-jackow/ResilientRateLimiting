@@ -8,20 +8,25 @@ public class ColdStartTests
 {
     private readonly FakeTimeProvider _clock = new();
 
-    private static ResilientRateLimiterOptions Options(double factor) => new()
+    private static ResilientRateLimiterOptions Options() => new()
+    {
+        FallbackRecoveryTime = TimeSpan.FromMinutes(1),
+    };
+
+    private static StoreHealthOptions StoreOptions(double factor) => new()
     {
         ExpectedReplicaCount = 3,
-        FallbackRecoveryTime = TimeSpan.FromMinutes(1),
         ColdStartFallbackFactor = factor,
     };
 
     [Fact]
     public async Task A_process_that_never_reached_the_store_gets_a_reduced_budget()
     {
-        var options = Options(0.5);
+        var storeOptions = StoreOptions(0.5);
+        var options = Options();
         using var primary = new FakeRateLimiter().AlwaysFail(new InvalidDataException("store down"));
         using var fallback = new FakeRateLimiter(permitLimit: 4);
-        using var limiter = new ResilientRateLimiter(primary, fallback, options, new StoreHealth(options, _clock), _clock);
+        using var limiter = new ResilientRateLimiter(primary, fallback, options, new StoreHealth(storeOptions, _clock), _clock);
 
         Assert.Equal(2, await AdmittedAsync(limiter, requests: 4));
     }
@@ -29,10 +34,11 @@ public class ColdStartTests
     [Fact]
     public async Task One_successful_store_call_restores_the_full_budget()
     {
-        var options = Options(0.5);
+        var storeOptions = StoreOptions(0.5);
+        var options = Options();
         using var primary = new FakeRateLimiter(permitLimit: 1000);
         using var fallback = new FakeRateLimiter(permitLimit: 4);
-        using var limiter = new ResilientRateLimiter(primary, fallback, options, new StoreHealth(options, _clock), _clock);
+        using var limiter = new ResilientRateLimiter(primary, fallback, options, new StoreHealth(storeOptions, _clock), _clock);
 
         // One healthy call proves the store is reachable. It also warms one local permit.
         (await limiter.AcquireAsync(1, TestContext.Current.CancellationToken)).Dispose();
@@ -45,10 +51,11 @@ public class ColdStartTests
     [Fact]
     public async Task The_default_factor_changes_nothing()
     {
-        var options = Options(1.0);
+        var storeOptions = StoreOptions(1.0);
+        var options = Options();
         using var primary = new FakeRateLimiter().AlwaysFail(new InvalidDataException("store down"));
         using var fallback = new FakeRateLimiter(permitLimit: 4);
-        using var limiter = new ResilientRateLimiter(primary, fallback, options, new StoreHealth(options, _clock), _clock);
+        using var limiter = new ResilientRateLimiter(primary, fallback, options, new StoreHealth(storeOptions, _clock), _clock);
 
         Assert.Equal(4, await AdmittedAsync(limiter, requests: 4));
     }
@@ -56,10 +63,11 @@ public class ColdStartTests
     [Fact]
     public async Task The_factor_scales_the_whole_permit_count()
     {
-        var options = Options(0.5);
+        var storeOptions = StoreOptions(0.5);
+        var options = Options();
         using var primary = new FakeRateLimiter().AlwaysFail(new InvalidDataException("store down"));
         using var fallback = new FakeRateLimiter(permitLimit: 4);
-        using var limiter = new ResilientRateLimiter(primary, fallback, options, new StoreHealth(options, _clock), _clock);
+        using var limiter = new ResilientRateLimiter(primary, fallback, options, new StoreHealth(storeOptions, _clock), _clock);
         var cancellationToken = TestContext.Current.CancellationToken;
 
         using var first = await limiter.AcquireAsync(2, cancellationToken);
@@ -73,10 +81,11 @@ public class ColdStartTests
     [Fact]
     public async Task A_rejected_store_answer_still_counts_as_reaching_the_store()
     {
-        var options = Options(0.5);
+        var storeOptions = StoreOptions(0.5);
+        var options = Options();
         using var primary = new FakeRateLimiter(permitLimit: 0);
         using var fallback = new FakeRateLimiter(permitLimit: 4);
-        using var limiter = new ResilientRateLimiter(primary, fallback, options, new StoreHealth(options, _clock), _clock);
+        using var limiter = new ResilientRateLimiter(primary, fallback, options, new StoreHealth(storeOptions, _clock), _clock);
 
         // The store answered, even though it said no.
         (await limiter.AcquireAsync(1, TestContext.Current.CancellationToken)).Dispose();
@@ -89,7 +98,8 @@ public class ColdStartTests
     [Fact]
     public async Task A_scaled_charge_above_the_local_limit_still_serves_the_request()
     {
-        var options = Options(0.5);
+        var storeOptions = StoreOptions(0.5);
+        var options = Options();
         using var primary = new FakeRateLimiter().AlwaysFail(new InvalidDataException("store down"));
         using var fallback = new FixedWindowRateLimiter(new FixedWindowRateLimiterOptions
         {
@@ -98,7 +108,7 @@ public class ColdStartTests
             QueueLimit = 0,
             AutoReplenishment = false,
         });
-        using var limiter = new ResilientRateLimiter(primary, fallback, options, new StoreHealth(options, _clock), _clock);
+        using var limiter = new ResilientRateLimiter(primary, fallback, options, new StoreHealth(storeOptions, _clock), _clock);
 
         // The scaled charge is ceil(3 / 0.5) = 6, above the fallback's limit of 4. A real
         // RateLimiter throws ArgumentOutOfRangeException for that; the caller must still be served.
@@ -112,7 +122,8 @@ public class ColdStartTests
     [Fact]
     public async Task A_permit_count_above_the_local_limit_is_rejected_rather_than_thrown()
     {
-        var options = Options(0.5);
+        var storeOptions = StoreOptions(0.5);
+        var options = Options();
         using var primary = new FakeRateLimiter().AlwaysFail(new InvalidDataException("store down"));
         using var fallback = new FixedWindowRateLimiter(new FixedWindowRateLimiterOptions
         {
@@ -121,7 +132,7 @@ public class ColdStartTests
             QueueLimit = 0,
             AutoReplenishment = false,
         });
-        using var limiter = new ResilientRateLimiter(primary, fallback, options, new StoreHealth(options, _clock), _clock);
+        using var limiter = new ResilientRateLimiter(primary, fallback, options, new StoreHealth(storeOptions, _clock), _clock);
 
         // Neither the scaled charge (10) nor the plain one (5) can ever be granted by a limiter
         // whose whole budget is 4. A real RateLimiter throws for both.
@@ -136,7 +147,8 @@ public class ColdStartTests
     [Fact]
     public async Task A_rejection_the_local_limiter_never_saw_holds_no_warm_state()
     {
-        var options = Options(1.0);
+        var storeOptions = StoreOptions(1.0);
+        var options = Options();
         using var primary = new FakeRateLimiter().AlwaysFail(new InvalidDataException("store down"));
         using var fallback = new FixedWindowRateLimiter(new FixedWindowRateLimiterOptions
         {
@@ -145,7 +157,7 @@ public class ColdStartTests
             QueueLimit = 0,
             AutoReplenishment = false,
         });
-        using var limiter = new ResilientRateLimiter(primary, fallback, options, new StoreHealth(options, _clock), _clock);
+        using var limiter = new ResilientRateLimiter(primary, fallback, options, new StoreHealth(storeOptions, _clock), _clock);
 
         (await limiter.AcquireAsync(5, TestContext.Current.CancellationToken)).Dispose();
 
@@ -156,10 +168,11 @@ public class ColdStartTests
     [Fact]
     public async Task A_negative_permit_count_is_rejected_by_the_framework_before_this_limiter_sees_it()
     {
-        var options = Options(0.5);
+        var storeOptions = StoreOptions(0.5);
+        var options = Options();
         using var primary = new FakeRateLimiter().AlwaysFail(new InvalidDataException("store down"));
         using var fallback = new FakeRateLimiter(permitLimit: 4);
-        using var limiter = new ResilientRateLimiter(primary, fallback, options, new StoreHealth(options, _clock), _clock);
+        using var limiter = new ResilientRateLimiter(primary, fallback, options, new StoreHealth(storeOptions, _clock), _clock);
 
         await Assert.ThrowsAsync<ArgumentOutOfRangeException>(
             async () => await limiter.AcquireAsync(-1, TestContext.Current.CancellationToken));
@@ -170,7 +183,8 @@ public class ColdStartTests
     [Fact]
     public async Task A_permit_count_that_overflows_the_scaled_charge_is_rejected_rather_than_thrown()
     {
-        var options = Options(0.5);
+        var storeOptions = StoreOptions(0.5);
+        var options = Options();
         using var primary = new FakeRateLimiter().AlwaysFail(new InvalidDataException("store down"));
         using var fallback = new FixedWindowRateLimiter(new FixedWindowRateLimiterOptions
         {
@@ -179,7 +193,7 @@ public class ColdStartTests
             QueueLimit = 0,
             AutoReplenishment = false,
         });
-        using var limiter = new ResilientRateLimiter(primary, fallback, options, new StoreHealth(options, _clock), _clock);
+        using var limiter = new ResilientRateLimiter(primary, fallback, options, new StoreHealth(storeOptions, _clock), _clock);
 
         // Doubling this count does not fit in an int. The conversion saturates on this runtime, so
         // the test pins the outcome a caller sees, not the clamp itself.
@@ -193,8 +207,9 @@ public class ColdStartTests
     [Fact]
     public async Task Cold_start_ends_for_every_limiter_sharing_the_store()
     {
-        var options = Options(0.5);
-        var health = new StoreHealth(options, _clock);
+        var storeOptions = StoreOptions(0.5);
+        var options = Options();
+        var health = new StoreHealth(storeOptions, _clock);
         using var healthyPrimary = new FakeRateLimiter(permitLimit: 1000);
         using var healthyFallback = new FakeRateLimiter(permitLimit: 4);
         using var reachesTheStore = new ResilientRateLimiter(healthyPrimary, healthyFallback, options, health, _clock);

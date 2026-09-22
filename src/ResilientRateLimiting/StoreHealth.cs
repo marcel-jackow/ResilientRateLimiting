@@ -11,20 +11,19 @@ public sealed class StoreHealth
     private int _livePartitions;
     private bool _reached;
 
-    /// <param name="options">The same options the partitions use.</param>
+    /// <param name="options">Configuration for this store connection, validated here so a wrong setup fails at startup.</param>
     /// <param name="timeProvider">Defaults to <see cref="TimeProvider.System"/>.</param>
-    public StoreHealth(ResilientRateLimiterOptions options, TimeProvider? timeProvider = null)
+    public StoreHealth(StoreHealthOptions options, TimeProvider? timeProvider = null)
     {
         ArgumentNullException.ThrowIfNull(options);
         options.Validate();
 
-        var shouldHandle = options.ShouldHandle;
+        Options = options;
 
         _pipeline = new ResiliencePipelineBuilder<RateLimitLease> { TimeProvider = timeProvider ?? TimeProvider.System }
             .AddCircuitBreaker(new CircuitBreakerStrategyOptions<RateLimitLease>
             {
-                ShouldHandle = args =>
-                    new ValueTask<bool>(StoreFailureClassifier.IsStoreFailure(args.Outcome.Exception, shouldHandle)),
+                ShouldHandle = args => new ValueTask<bool>(IsStoreFailure(args.Outcome.Exception)),
                 FailureRatio = options.FailureRatio,
                 MinimumThroughput = options.FailuresBeforeOpen,
                 SamplingDuration = options.BreakerSamplingDuration,
@@ -33,7 +32,14 @@ public sealed class StoreHealth
             .Build();
     }
 
+    /// <summary>The settings every limiter on this connection shares. One copy, so nothing can disagree with it.</summary>
+    internal StoreHealthOptions Options { get; }
+
     internal ResiliencePipeline<RateLimitLease> Pipeline => _pipeline;
+
+    /// <summary>The single verdict on whether an exception means this store failed. The breaker scores outcomes with it, and every limiter on this connection asks it rather than keeping its own predicate.</summary>
+    internal bool IsStoreFailure(Exception? exception) =>
+        StoreFailureClassifier.IsStoreFailure(exception, Options.ShouldHandle);
 
     internal int LivePartitions => Volatile.Read(ref _livePartitions);
 

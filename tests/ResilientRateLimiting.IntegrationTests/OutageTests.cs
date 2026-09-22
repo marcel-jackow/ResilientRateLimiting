@@ -27,8 +27,12 @@ public class OutageTests : IAsyncLifetime
 
         var options = new ResilientRateLimiterOptions
         {
-            ExpectedReplicaCount = 3,
             FallbackRecoveryTime = TimeSpan.FromMinutes(1),
+        };
+
+        var storeOptions = new StoreHealthOptions
+        {
+            ExpectedReplicaCount = 3,
             StoreTimeout = TimeSpan.FromMilliseconds(200),
             FailuresBeforeOpen = 2,
             BreakDuration = TimeSpan.FromSeconds(5),
@@ -49,7 +53,7 @@ public class OutageTests : IAsyncLifetime
                 QueueLimit = 0,
             }),
             options: options,
-            storeHealth: new StoreHealth(options));
+            storeHealth: new StoreHealth(storeOptions));
 
         using (var healthy = await limiter.AcquireAsync(1, cancellationToken))
         {

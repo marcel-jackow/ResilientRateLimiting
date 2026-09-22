@@ -9,10 +9,11 @@ public class IdleDurationTests
 
     private static ResilientRateLimiterOptions Options() => new()
     {
-        ExpectedReplicaCount = 3,
         FallbackRecoveryTime = TimeSpan.FromMinutes(1),
         MaxWarmRetention = TimeSpan.FromMinutes(2),
     };
+
+    private static StoreHealthOptions StoreOptions() => new() { ExpectedReplicaCount = 3 };
 
     [Fact]
     public void Reports_its_own_time_since_construction_before_any_request_is_served()
@@ -20,7 +21,7 @@ public class IdleDurationTests
         using var primary = new FakeRateLimiter(permitLimit: 10)
             .ThrowsOnIdleDuration(new InvalidOperationException("primary idle clock is unusable"));
         using var fallback = new FakeRateLimiter(permitLimit: 10);
-        using var limiter = new ResilientRateLimiter(primary, fallback, Options(), new StoreHealth(Options(), _clock), _clock);
+        using var limiter = new ResilientRateLimiter(primary, fallback, Options(), new StoreHealth(StoreOptions(), _clock), _clock);
 
         _clock.Advance(TimeSpan.FromSeconds(11));
 
@@ -36,7 +37,7 @@ public class IdleDurationTests
         using var primary = new FakeRateLimiter(permitLimit: 10)
             .ThrowsOnIdleDuration(new InvalidOperationException("primary idle clock is unusable"));
         using var fallback = new FakeRateLimiter(permitLimit: 10);
-        using var limiter = new ResilientRateLimiter(primary, fallback, Options(), new StoreHealth(Options(), _clock), _clock);
+        using var limiter = new ResilientRateLimiter(primary, fallback, Options(), new StoreHealth(StoreOptions(), _clock), _clock);
 
         await Assert.ThrowsAnyAsync<OperationCanceledException>(
             async () => await limiter.AcquireAsync(1, cancelled.Token));
@@ -54,7 +55,7 @@ public class IdleDurationTests
         using var primary = new FakeRateLimiter(permitLimit: 10)
             .ThrowsOnIdleDuration(new InvalidOperationException("primary idle clock is unusable"));
         using var fallback = new FakeRateLimiter(permitLimit: 10);
-        using var limiter = new ResilientRateLimiter(primary, fallback, Options(), new StoreHealth(Options(), clock), clock);
+        using var limiter = new ResilientRateLimiter(primary, fallback, Options(), new StoreHealth(StoreOptions(), clock), clock);
 
         (await limiter.AcquireAsync(1, TestContext.Current.CancellationToken)).Dispose();
         clock.Advance(TimeSpan.FromSeconds(30));
@@ -69,7 +70,7 @@ public class IdleDurationTests
         using var primary = new FakeRateLimiter(permitLimit: 10)
             .ThrowsOnIdleDuration(new InvalidOperationException("primary idle clock is unusable"));
         using var fallback = new FakeRateLimiter(permitLimit: 10);
-        using var limiter = new ResilientRateLimiter(primary, fallback, Options(), new StoreHealth(Options(), clock), clock);
+        using var limiter = new ResilientRateLimiter(primary, fallback, Options(), new StoreHealth(StoreOptions(), clock), clock);
 
         (await limiter.AcquireAsync(1, TestContext.Current.CancellationToken)).Dispose();
         clock.Advance(TimeSpan.FromSeconds(61));
@@ -84,7 +85,7 @@ public class IdleDurationTests
         using var primary = new FakeRateLimiter(permitLimit: 10)
             .ThrowsOnIdleDuration(new InvalidOperationException("primary idle clock is unusable"));
         using var fallback = new FakeRateLimiter(permitLimit: 10);
-        using var limiter = new ResilientRateLimiter(primary, fallback, Options(), new StoreHealth(Options(), clock), clock);
+        using var limiter = new ResilientRateLimiter(primary, fallback, Options(), new StoreHealth(StoreOptions(), clock), clock);
 
         (await limiter.AcquireAsync(1, TestContext.Current.CancellationToken)).Dispose();
         clock.Advance(TimeSpan.FromMinutes(1));
@@ -100,7 +101,7 @@ public class IdleDurationTests
             .ThrowsOnIdleDuration(new InvalidOperationException("primary idle clock is unusable"))
             .AlwaysFail(new InvalidDataException("store down"));
         using var fallback = new FakeRateLimiter(permitLimit: 10);
-        using var limiter = new ResilientRateLimiter(primary, fallback, Options(), new StoreHealth(Options(), clock), clock);
+        using var limiter = new ResilientRateLimiter(primary, fallback, Options(), new StoreHealth(StoreOptions(), clock), clock);
 
         (await limiter.AcquireAsync(1, TestContext.Current.CancellationToken)).Dispose();
         clock.Advance(TimeSpan.FromSeconds(30));
@@ -112,14 +113,16 @@ public class IdleDurationTests
     public async Task Caps_retention_at_the_configured_maximum()
     {
         var clock = new FakeTimeProvider();
-        var options = Options();
-        options.FallbackRecoveryTime = TimeSpan.FromHours(24);
-        options.MaxWarmRetention = TimeSpan.FromMinutes(2);
+        var options = new ResilientRateLimiterOptions
+        {
+            FallbackRecoveryTime = TimeSpan.FromHours(24),
+            MaxWarmRetention = TimeSpan.FromMinutes(2),
+        };
 
         using var primary = new FakeRateLimiter(permitLimit: 10)
             .ThrowsOnIdleDuration(new InvalidOperationException("primary idle clock is unusable"));
         using var fallback = new FakeRateLimiter(permitLimit: 10);
-        using var limiter = new ResilientRateLimiter(primary, fallback, options, new StoreHealth(options, clock), clock);
+        using var limiter = new ResilientRateLimiter(primary, fallback, options, new StoreHealth(StoreOptions(), clock), clock);
 
         (await limiter.AcquireAsync(1, TestContext.Current.CancellationToken)).Dispose();
 
@@ -134,13 +137,16 @@ public class IdleDurationTests
     public async Task Reports_not_idle_while_a_request_is_still_in_flight()
     {
         var clock = new FakeTimeProvider();
-        var options = Options();
-        options.MaxWarmRetention = TimeSpan.FromSeconds(1);
+        var options = new ResilientRateLimiterOptions
+        {
+            FallbackRecoveryTime = TimeSpan.FromMinutes(1),
+            MaxWarmRetention = TimeSpan.FromSeconds(1),
+        };
 
         using var primary = new FakeRateLimiter(permitLimit: 10)
             .ThrowsOnIdleDuration(new InvalidOperationException("primary idle clock is unusable"));
         using var fallback = new FakeRateLimiter(permitLimit: 10);
-        using var limiter = new ResilientRateLimiter(primary, fallback, options, new StoreHealth(options, clock), clock);
+        using var limiter = new ResilientRateLimiter(primary, fallback, options, new StoreHealth(StoreOptions(), clock), clock);
 
         (await limiter.AcquireAsync(1, TestContext.Current.CancellationToken)).Dispose();
         clock.Advance(TimeSpan.FromSeconds(11));
@@ -161,10 +167,15 @@ public class IdleDurationTests
     {
         var clock = new FakeTimeProvider();
         var options = Options();
-        options.FailuresBeforeOpen = 2;
-        options.BreakDuration = TimeSpan.FromMinutes(10);
-        options.MaxWarmPartitions = 1;
-        var health = new StoreHealth(options, clock);
+        var health = new StoreHealth(
+            new StoreHealthOptions
+            {
+                ExpectedReplicaCount = 3,
+                FailuresBeforeOpen = 2,
+                BreakDuration = TimeSpan.FromMinutes(10),
+                MaxWarmPartitions = 1,
+            },
+            clock);
 
         using var primary = new FakeRateLimiter()
             .ThrowsOnIdleDuration(new InvalidOperationException("primary idle clock is unusable"))
