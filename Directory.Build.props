@@ -10,7 +10,7 @@
   <PropertyGroup Condition="'$(IsPackable)' != 'false'">
     <Authors>Marcel Jackow</Authors>
     <PackageLicenseExpression>MIT</PackageLicenseExpression>
-    <PackageTags>rate-limiting;distributed;redis;resilience;aspnetcore;polly</PackageTags>
+    <PackageTags>rate-limiting;distributed;resilience;polly</PackageTags>
     <GenerateDocumentationFile>true</GenerateDocumentationFile>
     <IncludeSymbols>true</IncludeSymbols>
     <SymbolPackageFormat>snupkg</SymbolPackageFormat>
