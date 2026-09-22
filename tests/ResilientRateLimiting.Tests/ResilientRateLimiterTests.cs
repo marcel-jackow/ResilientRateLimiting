@@ -192,7 +192,8 @@ public class ResilientRateLimiterTests
     [Fact]
     public async Task Does_not_warm_a_fallback_a_fail_open_limiter_will_never_consult()
     {
-        using var primary = new FakeRateLimiter(permitLimit: 10);
+        using var primary = new FakeRateLimiter(permitLimit: 10)
+            .ThrowsOnIdleDuration(new InvalidOperationException("primary idle clock is unusable"));
         using var fallback = new FakeRateLimiter(permitLimit: 10);
         using var limiter = new ResilientRateLimiter(
             primary, fallback, Options(StoreFailureBehavior.FailOpen), new StoreHealth(Options(StoreFailureBehavior.FailOpen), _clock), _clock);

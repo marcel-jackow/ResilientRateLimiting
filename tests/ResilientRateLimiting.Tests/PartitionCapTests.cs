@@ -23,7 +23,8 @@ public class PartitionCapTests
 
         for (var i = 0; i < 3; i++)
         {
-            var primary = new FakeRateLimiter(permitLimit: 10);
+            var primary = new FakeRateLimiter(permitLimit: 10)
+                .ThrowsOnIdleDuration(new InvalidOperationException("primary idle clock is unusable"));
             var fallback = new FakeRateLimiter(permitLimit: 10);
             limiters.Add(new ResilientRateLimiter(primary, fallback, options, health, clock));
         }
@@ -52,7 +53,8 @@ public class PartitionCapTests
         var options = Options(maxWarmPartitions: 1);
         var health = new StoreHealth(options, clock);
 
-        var primaryOne = new FakeRateLimiter(permitLimit: 10);
+        var primaryOne = new FakeRateLimiter(permitLimit: 10)
+            .ThrowsOnIdleDuration(new InvalidOperationException("primary idle clock is unusable"));
         var fallbackOne = new FakeRateLimiter(permitLimit: 10);
         var limiterOne = new ResilientRateLimiter(primaryOne, fallbackOne, options, health, clock);
 

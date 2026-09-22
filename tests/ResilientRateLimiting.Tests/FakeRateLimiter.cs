@@ -37,8 +37,6 @@ public sealed class FakeRateLimiter(int permitLimit = int.MaxValue) : RateLimite
 
     public TimeSpan? RetryAfter { get; set; }
 
-    public TimeSpan? ReportedIdleDuration { get; set; } = TimeSpan.Zero;
-
     public int IdleDurationReads => Volatile.Read(ref _idleDurationReads);
 
     public override TimeSpan? IdleDuration
@@ -46,7 +44,7 @@ public sealed class FakeRateLimiter(int permitLimit = int.MaxValue) : RateLimite
         get
         {
             Interlocked.Increment(ref _idleDurationReads);
-            return _idleFailure is null ? ReportedIdleDuration : throw _idleFailure;
+            return _idleFailure is null ? TimeSpan.Zero : throw _idleFailure;
         }
     }
 
