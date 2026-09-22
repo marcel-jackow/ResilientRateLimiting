@@ -8,15 +8,15 @@ namespace ResilientRateLimiting;
 public sealed class ResilientRateLimiter : RateLimiter
 {
     private readonly RateLimiter _primary;
-    private readonly RateLimiter? _fallback;
+    private readonly LocalMirror? _mirror;
     private readonly StoreFailureBehavior _failureBehavior;
     private readonly TimeSpan _storeTimeout;
     private readonly Func<Exception, bool>? _shouldHandle;
     private readonly TimeProvider _timeProvider;
     private readonly StoreHealth _storeHealth;
-    private readonly TimeSpan _retention;
-    private readonly int _maxWarmPartitions;
-    private long _lastLocalConsumption = long.MinValue;
+    private readonly TimeSpan _recoveryTime;
+    private long _recoveryArmedAt = long.MinValue;
+    private long _lastFallbackAt = long.MinValue;
     private long _lastActivity;
     private int _released;
     private int _inFlight;
@@ -43,25 +43,18 @@ public sealed class ResilientRateLimiter : RateLimiter
             ArgumentNullException.ThrowIfNull(fallback);
         }
 
-        if (fallback is ConcurrencyLimiter)
-        {
-            throw new ArgumentException(
-                "A ConcurrencyLimiter cannot serve as the local fallback: its leases return the permit on dispose, so no warm state can be held.",
-                nameof(fallback));
-        }
-
         _primary = primary;
-        _fallback = fallback;
         _failureBehavior = options.FailureBehavior;
         _storeTimeout = options.StoreTimeout;
         _shouldHandle = options.ShouldHandle;
         _timeProvider = timeProvider ?? TimeProvider.System;
         _lastActivity = _timeProvider.GetTimestamp();
         _storeHealth = storeHealth;
-        _retention = options.FallbackRecoveryTime < options.MaxWarmRetention
-            ? options.FallbackRecoveryTime
-            : options.MaxWarmRetention;
-        _maxWarmPartitions = options.MaxWarmPartitions;
+        _recoveryTime = options.FallbackRecoveryTime;
+
+        // Built whenever a fallback was supplied, not only when it is consulted, so that a
+        // fail-open limiter still disposes the limiter it was handed.
+        _mirror = fallback is null ? null : new LocalMirror(fallback, options, storeHealth, _timeProvider);
 
         _storeHealth.RegisterPartition();
     }
@@ -76,21 +69,7 @@ public sealed class ResilientRateLimiter : RateLimiter
                 return null;
             }
 
-            if (_storeHealth.LivePartitions > _maxWarmPartitions)
-            {
-                return OwnIdleDuration();
-            }
-
-            var lastConsumption = Interlocked.Read(ref _lastLocalConsumption);
-
-            if (lastConsumption == long.MinValue)
-            {
-                return OwnIdleDuration();
-            }
-
-            return _timeProvider.GetElapsedTime(lastConsumption) >= _retention
-                ? OwnIdleDuration()
-                : null;
+            return _mirror?.HoldsWarmState == true ? null : OwnIdleDuration();
         }
     }
 
@@ -107,23 +86,50 @@ public sealed class ResilientRateLimiter : RateLimiter
 
         try
         {
+            var verdict = LocalVerdict.NotConsulted;
+
+            if (IsInRecovery() && _mirror is { } gate)
+            {
+                verdict = gate.Charge(permitCount, out var retryAfter);
+
+                if (verdict == LocalVerdict.Refused)
+                {
+                    RecordActivity();
+
+                    return new ResilientRateLimitLease(StaticLease.Rejected, LeaseSource.LocalFallback, retryAfter);
+                }
+            }
+
             try
             {
-                var lease = await AcquireFromStoreAsync(permitCount, cancellationToken).ConfigureAwait(false);
+                var lease = await _storeHealth.Pipeline
+                    .ExecuteAsync(
+                        static (state, token) => state.Limiter.RaceAgainstCutoffAsync(state.PermitCount, token),
+                        (Limiter: this, PermitCount: permitCount),
+                        cancellationToken)
+                    .ConfigureAwait(false);
+
+                _storeHealth.MarkReached();
 
                 RecordActivity();
 
-                if (lease.IsAcquired)
+                if (lease.IsAcquired && verdict != LocalVerdict.Granted)
                 {
                     ConsumeLocalPermit(permitCount);
                 }
+
+                ArmRecovery();
 
                 return new ResilientRateLimitLease(lease, LeaseSource.Distributed);
             }
             catch (Exception exception) when (StoreFailureClassifier.IsStoreFailure(exception, _shouldHandle))
             {
+                Interlocked.Exchange(ref _lastFallbackAt, _timeProvider.GetTimestamp());
+
                 // Anything thrown from here on has nowhere left to go, and reaches the caller.
-                var served = await FallbackAsync(permitCount, cancellationToken).ConfigureAwait(false);
+                var served = verdict == LocalVerdict.Granted
+                    ? new ResilientRateLimitLease(StaticLease.Acquired, LeaseSource.LocalFallback)
+                    : await FallbackAsync(permitCount, cancellationToken).ConfigureAwait(false);
 
                 RecordActivity();
 
@@ -147,7 +153,7 @@ public sealed class ResilientRateLimiter : RateLimiter
         ReleasePartition();
 
         _primary.Dispose();
-        _fallback?.Dispose();
+        _mirror?.Dispose();
     }
 
     /// <inheritdoc />
@@ -157,11 +163,13 @@ public sealed class ResilientRateLimiter : RateLimiter
 
         await _primary.DisposeAsync().ConfigureAwait(false);
 
-        if (_fallback is not null)
+        if (_mirror is not null)
         {
-            await _fallback.DisposeAsync().ConfigureAwait(false);
+            await _mirror.DisposeAsync().ConfigureAwait(false);
         }
     }
+
+    private bool IsWarmFallback => _failureBehavior == StoreFailureBehavior.LocalFallback;
 
     private TimeSpan OwnIdleDuration() => _timeProvider.GetElapsedTime(Interlocked.Read(ref _lastActivity));
 
@@ -174,13 +182,6 @@ public sealed class ResilientRateLimiter : RateLimiter
             _storeHealth.ReleasePartition();
         }
     }
-
-    private async Task<RateLimitLease> AcquireFromStoreAsync(int permitCount, CancellationToken cancellationToken) =>
-        await _storeHealth.Pipeline
-            .ExecuteAsync(
-                async token => await RaceAgainstCutoffAsync(permitCount, token).ConfigureAwait(false),
-                cancellationToken)
-            .ConfigureAwait(false);
 
     private async ValueTask<RateLimitLease> RaceAgainstCutoffAsync(int permitCount, CancellationToken token)
     {
@@ -223,22 +224,37 @@ public sealed class ResilientRateLimiter : RateLimiter
         }
     }
 
-    /// <summary>Mirrors an admitted request in the local counter and discards the answer.</summary>
-    private void ConsumeLocalPermit(int permitCount)
+    private bool IsInRecovery()
     {
-        if (_fallback is null || _failureBehavior != StoreFailureBehavior.LocalFallback)
+        var armedAt = Interlocked.Read(ref _recoveryArmedAt);
+
+        return armedAt != long.MinValue && _timeProvider.GetElapsedTime(armedAt) < _recoveryTime;
+    }
+
+    /// <summary>Opens recovery mode when a call succeeds after a fallback within the last recovery time. The claim is consumed atomically, so one outage arms one window.</summary>
+    private void ArmRecovery()
+    {
+        if (!IsWarmFallback)
         {
             return;
         }
 
-        try
+        var fellBackAt = Interlocked.Exchange(ref _lastFallbackAt, long.MinValue);
+
+        if (fellBackAt == long.MinValue || _timeProvider.GetElapsedTime(fellBackAt) >= _recoveryTime)
         {
-            using var warm = _fallback.AttemptAcquire(permitCount);
-            Interlocked.Exchange(ref _lastLocalConsumption, _timeProvider.GetTimestamp());
+            return;
         }
-        catch
+
+        Interlocked.Exchange(ref _recoveryArmedAt, _timeProvider.GetTimestamp());
+    }
+
+    /// <summary>Mirrors an admitted request in the local counter and discards the answer.</summary>
+    private void ConsumeLocalPermit(int permitCount)
+    {
+        if (IsWarmFallback && _mirror is { } mirror)
         {
-            // Deliberately empty: the store already charged the caller, so a mirror failure must not surface.
+            _ = mirror.Charge(permitCount, out _);
         }
     }
 
@@ -280,14 +296,7 @@ public sealed class ResilientRateLimiter : RateLimiter
                 new ResilientRateLimitLease(StaticLease.Rejected, LeaseSource.FailClosed),
 
             _ => new ResilientRateLimitLease(
-                await AcquireFromFallbackAsync(permitCount, cancellationToken).ConfigureAwait(false),
+                await _mirror!.AcquireAsync(permitCount, cancellationToken).ConfigureAwait(false),
                 LeaseSource.LocalFallback),
         };
-
-    private async ValueTask<RateLimitLease> AcquireFromFallbackAsync(int permitCount, CancellationToken cancellationToken)
-    {
-        var lease = await _fallback!.AcquireAsync(permitCount, cancellationToken).ConfigureAwait(false);
-        Interlocked.Exchange(ref _lastLocalConsumption, _timeProvider.GetTimestamp());
-        return lease;
-    }
 }
