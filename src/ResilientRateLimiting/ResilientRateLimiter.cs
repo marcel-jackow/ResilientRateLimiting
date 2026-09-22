@@ -18,9 +18,11 @@ public sealed class ResilientRateLimiter : RateLimiter
     private readonly TimeSpan _recoveryTime;
     private readonly int _maxWarmPartitions;
     private readonly bool _warmFallback;
+    private readonly double _coldStartFactor;
     private long _lastLocalConsumption = long.MinValue;
     private long _recoveryUntil = long.MinValue;
     private volatile bool _lastCallFellBack;
+    private volatile bool _hasReachedTheStore;
     private long _lastActivity;
     private int _released;
     private int _inFlight;
@@ -68,6 +70,7 @@ public sealed class ResilientRateLimiter : RateLimiter
         _recoveryTime = options.FallbackRecoveryTime;
         _maxWarmPartitions = options.MaxWarmPartitions;
         _warmFallback = fallback is not null && options.FailureBehavior == StoreFailureBehavior.LocalFallback;
+        _coldStartFactor = options.ColdStartFallbackFactor;
 
         _storeHealth.RegisterPartition();
     }
@@ -125,6 +128,8 @@ public sealed class ResilientRateLimiter : RateLimiter
             try
             {
                 var lease = await AcquireFromStoreAsync(permitCount, cancellationToken).ConfigureAwait(false);
+
+                _hasReachedTheStore = true;
 
                 RecordActivity();
 
@@ -344,9 +349,14 @@ public sealed class ResilientRateLimiter : RateLimiter
                 LeaseSource.LocalFallback),
         };
 
+    /// <summary>Charges the local counter more than the caller asked for until this process has once reached the store: an empty counter in a process that has never been answered is not evidence of an empty share.</summary>
     private async ValueTask<RateLimitLease> AcquireFromFallbackAsync(int permitCount, CancellationToken cancellationToken)
     {
-        var lease = await _fallback!.AcquireAsync(permitCount, cancellationToken).ConfigureAwait(false);
+        var permits = _hasReachedTheStore
+            ? permitCount
+            : (int)Math.Ceiling(permitCount / _coldStartFactor);
+
+        var lease = await _fallback!.AcquireAsync(permits, cancellationToken).ConfigureAwait(false);
         Interlocked.Exchange(ref _lastLocalConsumption, _timeProvider.GetTimestamp());
         return lease;
     }
