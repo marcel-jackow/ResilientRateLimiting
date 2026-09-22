@@ -19,10 +19,21 @@ public class OutageTests : IAsyncLifetime
     {
         const int RequestsDuringOutage = 20;
         const int LocalBudget = 10;
+        const int HealthyRequestsBeforeOutage = 1;
         var partitionKey = $"outage-{Guid.NewGuid():N}";
         var cancellationToken = TestContext.Current.CancellationToken;
 
         var connection = await ConnectionMultiplexer.ConnectAsync(_container.GetConnectionString());
+
+        var options = new ResilientRateLimiterOptions
+        {
+            ExpectedReplicaCount = 3,
+            FallbackRecoveryTime = TimeSpan.FromMinutes(1),
+            StoreTimeout = TimeSpan.FromMilliseconds(200),
+            FailuresBeforeOpen = 2,
+            BreakDuration = TimeSpan.FromSeconds(5),
+            BreakerSamplingDuration = TimeSpan.FromSeconds(10),
+        };
 
         using var limiter = new ResilientRateLimiter(
             primary: new RedisSlidingWindowRateLimiter<string>(partitionKey, new RedisSlidingWindowRateLimiterOptions
@@ -37,15 +48,8 @@ public class OutageTests : IAsyncLifetime
                 Window = TimeSpan.FromMinutes(1),
                 QueueLimit = 0,
             }),
-            options: new ResilientRateLimiterOptions
-            {
-                ExpectedReplicaCount = 3,
-                FallbackRecoveryTime = TimeSpan.FromMinutes(1),
-                StoreTimeout = TimeSpan.FromMilliseconds(200),
-                FailuresBeforeOpen = 2,
-                BreakDuration = TimeSpan.FromSeconds(5),
-                BreakerSamplingDuration = TimeSpan.FromSeconds(10),
-            });
+            options: options,
+            storeHealth: new StoreHealth(options));
 
         using (var healthy = await limiter.AcquireAsync(1, cancellationToken))
         {
@@ -81,7 +85,7 @@ public class OutageTests : IAsyncLifetime
         Assert.Equal(RequestsDuringOutage, degraded);
 
         // And protection did not disappear: the local budget still bounded what got through.
-        Assert.Equal(LocalBudget, admitted);
+        Assert.Equal(LocalBudget - HealthyRequestsBeforeOutage, admitted);
 
         await connection.DisposeAsync();
     }

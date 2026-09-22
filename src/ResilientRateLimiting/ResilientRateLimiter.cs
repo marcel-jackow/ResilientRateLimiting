@@ -1,32 +1,41 @@
-using Polly;
 using Polly.Timeout;
 using System.Threading.RateLimiting;
 
 namespace ResilientRateLimiting;
 
 /// <summary>Wraps a store-backed rate limiter so a slow or unreachable store degrades instead of failing the request.</summary>
+/// <remarks>Must not wrap another <see cref="ResilientRateLimiter"/>: nesting shadows the inner lease's source metadata.</remarks>
 public sealed class ResilientRateLimiter : RateLimiter
 {
     private readonly RateLimiter _primary;
     private readonly RateLimiter? _fallback;
-    private readonly ResilientRateLimiterOptions _options;
     private readonly StoreFailureBehavior _failureBehavior;
     private readonly TimeSpan _storeTimeout;
+    private readonly Func<Exception, bool>? _shouldHandle;
     private readonly TimeProvider _timeProvider;
-    private readonly ResiliencePipeline<RateLimitLease> _pipeline;
+    private readonly StoreHealth _storeHealth;
+    private readonly TimeSpan _retention;
+    private readonly int _maxWarmPartitions;
+    private long _lastLocalConsumption = long.MinValue;
+    private long _lastActivity;
+    private int _released;
+    private int _inFlight;
 
     /// <param name="primary">The limiter backed by the shared store.</param>
-    /// <param name="fallback">In-memory limiter, required for <see cref="StoreFailureBehavior.LocalFallback"/>.</param>
+    /// <param name="fallback">In-memory window or token-bucket limiter, required for <see cref="StoreFailureBehavior.LocalFallback"/>; never a <see cref="ConcurrencyLimiter"/>, which hands its permit back when the lease is disposed and so cannot hold warm state.</param>
     /// <param name="options">Configuration, validated here so a wrong setup fails at startup.</param>
+    /// <param name="storeHealth">One per store connection, shared by every limiter using that store; each limiter must be disposed, because the shared live-partition count only falls on disposal.</param>
     /// <param name="timeProvider">Defaults to <see cref="TimeProvider.System"/>.</param>
     public ResilientRateLimiter(
         RateLimiter primary,
         RateLimiter? fallback,
         ResilientRateLimiterOptions options,
+        StoreHealth storeHealth,
         TimeProvider? timeProvider = null)
     {
         ArgumentNullException.ThrowIfNull(primary);
         ArgumentNullException.ThrowIfNull(options);
+        ArgumentNullException.ThrowIfNull(storeHealth);
         options.Validate();
 
         if (options.FailureBehavior == StoreFailureBehavior.LocalFallback)
@@ -34,19 +43,58 @@ public sealed class ResilientRateLimiter : RateLimiter
             ArgumentNullException.ThrowIfNull(fallback);
         }
 
+        if (fallback is ConcurrencyLimiter)
+        {
+            throw new ArgumentException(
+                "A ConcurrencyLimiter cannot serve as the local fallback: its leases return the permit on dispose, so no warm state can be held.",
+                nameof(fallback));
+        }
+
         _primary = primary;
         _fallback = fallback;
-        _options = options;
         _failureBehavior = options.FailureBehavior;
         _storeTimeout = options.StoreTimeout;
+        _shouldHandle = options.ShouldHandle;
         _timeProvider = timeProvider ?? TimeProvider.System;
-        _pipeline = BuildPipeline();
+        _lastActivity = _timeProvider.GetTimestamp();
+        _storeHealth = storeHealth;
+        _retention = options.FallbackRecoveryTime < options.MaxWarmRetention
+            ? options.FallbackRecoveryTime
+            : options.MaxWarmRetention;
+        _maxWarmPartitions = options.MaxWarmPartitions;
+
+        _storeHealth.RegisterPartition();
     }
 
-    /// <inheritdoc />
-    public override TimeSpan? IdleDuration => _primary.IdleDuration;
+    /// <summary>Reports no idle time while a request is in flight, or while local fallback state is still held unless the store's live partition count exceeds <see cref="ResilientRateLimiterOptions.MaxWarmPartitions"/>; otherwise reports how long ago this limiter last served a request, or was created if it has served none.</summary>
+    public override TimeSpan? IdleDuration
+    {
+        get
+        {
+            if (Volatile.Read(ref _inFlight) > 0)
+            {
+                return null;
+            }
 
-    /// <summary>Always <see langword="null"/>; see the README.</summary>
+            if (_storeHealth.LivePartitions > _maxWarmPartitions)
+            {
+                return OwnIdleDuration();
+            }
+
+            var lastConsumption = Interlocked.Read(ref _lastLocalConsumption);
+
+            if (lastConsumption == long.MinValue)
+            {
+                return OwnIdleDuration();
+            }
+
+            return _timeProvider.GetElapsedTime(lastConsumption) >= _retention
+                ? OwnIdleDuration()
+                : null;
+        }
+    }
+
+    /// <summary>Always <see langword="null"/>: the decorator keeps no counters of its own, and the store limiter answers for the shared state.</summary>
     public override RateLimiterStatistics? GetStatistics() => null;
 
     /// <summary>Always rejects, carrying no source tag: no store was consulted, so no path decided. The middleware calls the async path next.</summary>
@@ -55,16 +103,36 @@ public sealed class ResilientRateLimiter : RateLimiter
     /// <inheritdoc />
     protected override async ValueTask<RateLimitLease> AcquireAsyncCore(int permitCount, CancellationToken cancellationToken)
     {
+        Interlocked.Increment(ref _inFlight);
+
         try
         {
-            var lease = await AcquireFromStoreAsync(permitCount, cancellationToken).ConfigureAwait(false);
+            try
+            {
+                var lease = await AcquireFromStoreAsync(permitCount, cancellationToken).ConfigureAwait(false);
 
-            return new ResilientRateLimitLease(lease, LeaseSource.Distributed);
+                RecordActivity();
+
+                if (lease.IsAcquired)
+                {
+                    ConsumeLocalPermit(permitCount);
+                }
+
+                return new ResilientRateLimitLease(lease, LeaseSource.Distributed);
+            }
+            catch (Exception exception) when (StoreFailureClassifier.IsStoreFailure(exception, _shouldHandle))
+            {
+                // Anything thrown from here on has nowhere left to go, and reaches the caller.
+                var served = await FallbackAsync(permitCount, cancellationToken).ConfigureAwait(false);
+
+                RecordActivity();
+
+                return served;
+            }
         }
-        catch (Exception exception) when (StoreFailureClassifier.IsStoreFailure(exception, _options))
+        finally
         {
-            // Anything thrown from here on has nowhere left to go, and reaches the caller.
-            return await FallbackAsync(permitCount, cancellationToken).ConfigureAwait(false);
+            Interlocked.Decrement(ref _inFlight);
         }
     }
 
@@ -76,6 +144,8 @@ public sealed class ResilientRateLimiter : RateLimiter
             return;
         }
 
+        ReleasePartition();
+
         _primary.Dispose();
         _fallback?.Dispose();
     }
@@ -83,6 +153,8 @@ public sealed class ResilientRateLimiter : RateLimiter
     /// <inheritdoc />
     protected override async ValueTask DisposeAsyncCore()
     {
+        ReleasePartition();
+
         await _primary.DisposeAsync().ConfigureAwait(false);
 
         if (_fallback is not null)
@@ -91,12 +163,20 @@ public sealed class ResilientRateLimiter : RateLimiter
         }
     }
 
-    private ResiliencePipeline<RateLimitLease> BuildPipeline() =>
-        new ResiliencePipelineBuilder<RateLimitLease> { TimeProvider = _timeProvider }
-            .Build();
+    private TimeSpan OwnIdleDuration() => _timeProvider.GetElapsedTime(Interlocked.Read(ref _lastActivity));
+
+    private void RecordActivity() => Interlocked.Exchange(ref _lastActivity, _timeProvider.GetTimestamp());
+
+    private void ReleasePartition()
+    {
+        if (Interlocked.Exchange(ref _released, 1) == 0)
+        {
+            _storeHealth.ReleasePartition();
+        }
+    }
 
     private async Task<RateLimitLease> AcquireFromStoreAsync(int permitCount, CancellationToken cancellationToken) =>
-        await _pipeline
+        await _storeHealth.Pipeline
             .ExecuteAsync(
                 async token => await RaceAgainstCutoffAsync(permitCount, token).ConfigureAwait(false),
                 cancellationToken)
@@ -104,27 +184,67 @@ public sealed class ResilientRateLimiter : RateLimiter
 
     private async ValueTask<RateLimitLease> RaceAgainstCutoffAsync(int permitCount, CancellationToken token)
     {
-        using var storeToken = CancellationTokenSource.CreateLinkedTokenSource(token);
+        var storeToken = CancellationTokenSource.CreateLinkedTokenSource(token);
+        var abandoned = false;
 
-        var storeCall = _primary.AcquireAsync(permitCount, storeToken.Token).AsTask();
-        var expired = Task.Delay(_storeTimeout, _timeProvider, storeToken.Token);
-
-        if (await Task.WhenAny(storeCall, expired).ConfigureAwait(false) == storeCall)
+        try
         {
-            await storeToken.CancelAsync().ConfigureAwait(false);
-            return await storeCall.ConfigureAwait(false);
+            var storeCall = _primary.AcquireAsync(permitCount, storeToken.Token).AsTask();
+            var expired = Task.Delay(_storeTimeout, _timeProvider, storeToken.Token);
+
+            if (await Task.WhenAny(storeCall, expired).ConfigureAwait(false) == storeCall)
+            {
+                await storeToken.CancelAsync().ConfigureAwait(false);
+                return await storeCall.ConfigureAwait(false);
+            }
+
+            // From here the source belongs to the continuation, which outlives this method.
+            abandoned = true;
+
+            try
+            {
+                await storeToken.CancelAsync().ConfigureAwait(false);
+            }
+            finally
+            {
+                Abandon(storeCall, storeToken);
+            }
+
+            token.ThrowIfCancellationRequested();
+
+            throw new TimeoutRejectedException($"The store did not answer within {_storeTimeout}.");
         }
-
-        Abandon(storeCall);
-        await storeToken.CancelAsync().ConfigureAwait(false);
-        token.ThrowIfCancellationRequested();
-
-        throw new TimeoutRejectedException($"The store did not answer within {_storeTimeout}.");
+        finally
+        {
+            if (!abandoned)
+            {
+                storeToken.Dispose();
+            }
+        }
     }
 
-    private static void Abandon(Task<RateLimitLease> storeCall) =>
+    /// <summary>Mirrors an admitted request in the local counter and discards the answer.</summary>
+    private void ConsumeLocalPermit(int permitCount)
+    {
+        if (_fallback is null || _failureBehavior != StoreFailureBehavior.LocalFallback)
+        {
+            return;
+        }
+
+        try
+        {
+            using var warm = _fallback.AttemptAcquire(permitCount);
+            Interlocked.Exchange(ref _lastLocalConsumption, _timeProvider.GetTimestamp());
+        }
+        catch
+        {
+            // Deliberately empty: the store already charged the caller, so a mirror failure must not surface.
+        }
+    }
+
+    private static void Abandon(Task<RateLimitLease> storeCall, CancellationTokenSource storeToken) =>
         _ = storeCall.ContinueWith(
-            static completed =>
+            static (completed, state) =>
             {
                 try
                 {
@@ -140,7 +260,12 @@ public sealed class ResilientRateLimiter : RateLimiter
                     // The caller was served from the fallback; a failure releasing an abandoned
                     // lease has nowhere useful to go.
                 }
+                finally
+                {
+                    ((CancellationTokenSource)state!).Dispose();
+                }
             },
+            storeToken,
             CancellationToken.None,
             TaskContinuationOptions.None,
             TaskScheduler.Default);
@@ -155,7 +280,14 @@ public sealed class ResilientRateLimiter : RateLimiter
                 new ResilientRateLimitLease(StaticLease.Rejected, LeaseSource.FailClosed),
 
             _ => new ResilientRateLimitLease(
-                await _fallback!.AcquireAsync(permitCount, cancellationToken).ConfigureAwait(false),
+                await AcquireFromFallbackAsync(permitCount, cancellationToken).ConfigureAwait(false),
                 LeaseSource.LocalFallback),
         };
+
+    private async ValueTask<RateLimitLease> AcquireFromFallbackAsync(int permitCount, CancellationToken cancellationToken)
+    {
+        var lease = await _fallback!.AcquireAsync(permitCount, cancellationToken).ConfigureAwait(false);
+        Interlocked.Exchange(ref _lastLocalConsumption, _timeProvider.GetTimestamp());
+        return lease;
+    }
 }

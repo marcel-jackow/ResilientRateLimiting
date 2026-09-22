@@ -63,4 +63,15 @@ public class FakeRateLimiterTests
         Assert.True(lease.TryGetMetadata(MetadataName.RetryAfter.Name, out var value));
         Assert.Equal(TimeSpan.FromSeconds(4), value);
     }
+
+    [Fact]
+    public async Task Disposing_an_acquired_lease_does_not_return_the_permit_so_warm_state_survives()
+    {
+        using var limiter = new FakeRateLimiter(permitLimit: 5);
+
+        (await limiter.AcquireAsync(3, TestContext.Current.CancellationToken)).Dispose();
+
+        Assert.Equal(2, limiter.AvailablePermits);
+        Assert.Equal(1, limiter.LeasesDisposed);
+    }
 }

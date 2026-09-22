@@ -6,7 +6,7 @@ namespace ResilientRateLimiting;
 /// <summary>Decides whether an exception means the store failed, or should reach the caller.</summary>
 internal static class StoreFailureClassifier
 {
-    public static bool IsStoreFailure(Exception? exception, ResilientRateLimiterOptions options)
+    public static bool IsStoreFailure(Exception? exception, Func<Exception, bool>? shouldHandle)
     {
         if (exception is null)
         {
@@ -18,7 +18,7 @@ internal static class StoreFailureClassifier
             return false;
         }
 
-        if (options.ShouldHandle is { } shouldHandle)
+        if (shouldHandle is not null)
         {
             return shouldHandle(exception);
         }

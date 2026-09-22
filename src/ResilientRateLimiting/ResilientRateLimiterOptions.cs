@@ -9,8 +9,11 @@ public sealed class ResilientRateLimiterOptions
     /// <summary>How long to wait for the store before abandoning the call.</summary>
     public TimeSpan StoreTimeout { get; set; } = TimeSpan.FromMilliseconds(20);
 
-    /// <summary>Failed store calls within <see cref="BreakerSamplingDuration"/> that open the breaker. Minimum 2.</summary>
+    /// <summary>Store calls needed within <see cref="BreakerSamplingDuration"/> before the breaker may open, and only then if the failed share reaches <see cref="FailureRatio"/>. Minimum 2.</summary>
     public int FailuresBeforeOpen { get; set; } = 5;
+
+    /// <summary>The share of store calls within <see cref="BreakerSamplingDuration"/> that must fail before the breaker opens.</summary>
+    public double FailureRatio { get; set; } = 1.0;
 
     /// <summary>How long the breaker stays open before it probes the store again.</summary>
     public TimeSpan BreakDuration { get; set; } = TimeSpan.FromSeconds(5);
@@ -30,7 +33,7 @@ public sealed class ResilientRateLimiterOptions
     /// <summary>Upper bound on how long warm fallback state is held for an idle partition.</summary>
     public TimeSpan MaxWarmRetention { get; set; } = TimeSpan.FromMinutes(2);
 
-    /// <summary>Above this many live partitions, warm state is released early.</summary>
+    /// <summary>Above this many live partitions on the shared <see cref="StoreHealth"/>, warm state is released early for every partition, not only the excess ones.</summary>
     public int MaxWarmPartitions { get; set; } = 10_000;
 
     /// <summary>Scales the local budget until this process first reaches the store. 1.0 means no effect.</summary>
@@ -77,6 +80,12 @@ public sealed class ResilientRateLimiterOptions
                 "on a single failure.");
         }
 
+        if (FailureRatio is <= 0 or > 1)
+        {
+            throw new InvalidOperationException(
+                $"{nameof(FailureRatio)} must be greater than 0 and at most 1.");
+        }
+
         if (BreakDuration <= TimeSpan.Zero)
         {
             throw new InvalidOperationException($"{nameof(BreakDuration)} must be greater than zero.");
@@ -97,6 +106,11 @@ public sealed class ResilientRateLimiterOptions
         if (MaxWarmPartitions < 1)
         {
             throw new InvalidOperationException($"{nameof(MaxWarmPartitions)} must be at least 1.");
+        }
+
+        if (MaxWarmRetention <= TimeSpan.Zero)
+        {
+            throw new InvalidOperationException($"{nameof(MaxWarmRetention)} must be greater than zero.");
         }
 
         if (FailureBehavior != StoreFailureBehavior.LocalFallback)

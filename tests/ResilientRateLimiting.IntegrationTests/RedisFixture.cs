@@ -35,8 +35,11 @@ internal static class Replica
         StoreTimeout = TimeSpan.FromSeconds(2),
     };
 
-    public static ResilientRateLimiter Build(ConnectionMultiplexer connection, string partitionKey, int permitLimit) =>
-        new(
+    public static ResilientRateLimiter Build(ConnectionMultiplexer connection, string partitionKey, int permitLimit)
+    {
+        var options = Options();
+
+        return new ResilientRateLimiter(
             primary: new RedisSlidingWindowRateLimiter<string>(partitionKey, new RedisSlidingWindowRateLimiterOptions
             {
                 PermitLimit = permitLimit,
@@ -49,5 +52,7 @@ internal static class Replica
                 Window = TimeSpan.FromMinutes(1),
                 QueueLimit = 0,
             }),
-            options: Options());
+            options: options,
+            storeHealth: new StoreHealth(options));
+    }
 }

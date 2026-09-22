@@ -9,8 +9,12 @@ public sealed class FakeRateLimiter(int permitLimit = int.MaxValue) : RateLimite
     private int _available = permitLimit;
     private int _remainingFailures;
     private Exception? _failure;
+    private Exception? _attemptFailure;
+    private Exception? _idleFailure;
+    private int _idleDurationReads;
     private TaskCompletionSource? _hang;
     private bool _observeCancellation = true;
+    private bool _touchTokenOnResume;
 
     private int _leasesDisposed;
 
@@ -33,7 +37,16 @@ public sealed class FakeRateLimiter(int permitLimit = int.MaxValue) : RateLimite
 
     public TimeSpan? RetryAfter { get; set; }
 
-    public override TimeSpan? IdleDuration => null;
+    public int IdleDurationReads => Volatile.Read(ref _idleDurationReads);
+
+    public override TimeSpan? IdleDuration
+    {
+        get
+        {
+            Interlocked.Increment(ref _idleDurationReads);
+            return _idleFailure is null ? TimeSpan.Zero : throw _idleFailure;
+        }
+    }
 
     public override RateLimiterStatistics? GetStatistics() => null;
 
@@ -45,6 +58,18 @@ public sealed class FakeRateLimiter(int permitLimit = int.MaxValue) : RateLimite
     }
 
     public FakeRateLimiter AlwaysFail(Exception failure) => FailTimes(int.MaxValue, failure);
+
+    public FakeRateLimiter ThrowsOnAttemptAcquire(Exception failure)
+    {
+        _attemptFailure = failure;
+        return this;
+    }
+
+    public FakeRateLimiter ThrowsOnIdleDuration(Exception failure)
+    {
+        _idleFailure = failure;
+        return this;
+    }
 
     public FakeRateLimiter HangUntilReleased()
     {
@@ -59,6 +84,12 @@ public sealed class FakeRateLimiter(int permitLimit = int.MaxValue) : RateLimite
         return this;
     }
 
+    public FakeRateLimiter TouchesTokenOnResume()
+    {
+        _touchTokenOnResume = true;
+        return this;
+    }
+
     public void Release() => _hang?.TrySetResult();
 
     protected override void Dispose(bool disposing)
@@ -67,7 +98,8 @@ public sealed class FakeRateLimiter(int permitLimit = int.MaxValue) : RateLimite
         base.Dispose(disposing);
     }
 
-    protected override RateLimitLease AttemptAcquireCore(int permitCount) => Take(permitCount);
+    protected override RateLimitLease AttemptAcquireCore(int permitCount) =>
+        _attemptFailure is null ? Take(permitCount) : throw _attemptFailure;
 
     protected override async ValueTask<RateLimitLease> AcquireAsyncCore(int permitCount, CancellationToken cancellationToken)
     {
@@ -82,6 +114,12 @@ public sealed class FakeRateLimiter(int permitLimit = int.MaxValue) : RateLimite
             else
             {
                 await hang.Task.ConfigureAwait(false);
+            }
+
+            if (_touchTokenOnResume)
+            {
+                // A client blocking on the token touches its wait handle when it resumes.
+                _ = cancellationToken.WaitHandle.WaitOne(0);
             }
         }
 
