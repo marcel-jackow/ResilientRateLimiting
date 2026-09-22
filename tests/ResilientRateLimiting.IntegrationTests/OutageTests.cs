@@ -1,4 +1,4 @@
-﻿using RedisRateLimiting;
+using RedisRateLimiting;
 using StackExchange.Redis;
 using System.Threading.RateLimiting;
 using Testcontainers.Redis;

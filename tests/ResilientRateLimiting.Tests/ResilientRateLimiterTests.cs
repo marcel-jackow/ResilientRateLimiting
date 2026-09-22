@@ -1,4 +1,4 @@
-﻿using Microsoft.Extensions.Time.Testing;
+using Microsoft.Extensions.Time.Testing;
 using System.Threading.RateLimiting;
 using Xunit;
 
@@ -365,6 +365,18 @@ public class ResilientRateLimiterTests
             new ResilientRateLimiter(primary, fallback, Options(), new StoreHealth(Options(), _clock), _clock));
 
         Assert.Equal("fallback", error.ParamName);
+    }
+
+    [Fact]
+    public void Refuses_to_be_built_without_a_store_health()
+    {
+        using var primary = new FakeRateLimiter();
+        using var fallback = new FakeRateLimiter();
+
+        var error = Assert.Throws<ArgumentNullException>(() =>
+            new ResilientRateLimiter(primary, fallback, Options(), storeHealth: null!, _clock));
+
+        Assert.Equal("storeHealth", error.ParamName);
     }
 
     [Fact]
