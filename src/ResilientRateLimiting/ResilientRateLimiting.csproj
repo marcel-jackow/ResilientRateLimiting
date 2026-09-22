@@ -1,6 +1,6 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
-    <Description>Resilience for distributed rate limiting in ASP.NET Core - timeout, local fallback and circuit breaker for Redis-backed rate limiters.</Description>
+    <Description>Resilience for distributed rate limiting - timeout, local fallback and circuit breaker for any store-backed rate limiter.</Description>
   </PropertyGroup>
   <ItemGroup>
     <PackageReference Include="System.Threading.RateLimiting" />
