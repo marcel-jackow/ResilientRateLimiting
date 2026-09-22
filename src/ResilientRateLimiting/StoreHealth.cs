@@ -5,7 +5,7 @@ using System.Threading.RateLimiting;
 namespace ResilientRateLimiting;
 
 /// <summary>The health of one shared store. Create one per store connection and share it across partitions.</summary>
-public sealed class StoreHealth : IDisposable
+public sealed class StoreHealth
 {
     private readonly ResiliencePipeline<RateLimitLease> _pipeline;
     private int _livePartitions;
@@ -39,9 +39,4 @@ public sealed class StoreHealth : IDisposable
     internal void RegisterPartition() => Interlocked.Increment(ref _livePartitions);
 
     internal void ReleasePartition() => Interlocked.Decrement(ref _livePartitions);
-
-    /// <summary>No-op: the pipeline holds no unmanaged resource.</summary>
-    public void Dispose()
-    {
-    }
 }

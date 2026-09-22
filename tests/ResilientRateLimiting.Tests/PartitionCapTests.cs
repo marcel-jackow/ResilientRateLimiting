@@ -17,7 +17,7 @@ public class PartitionCapTests
     {
         var clock = new FakeTimeProvider();
         var options = Options(maxWarmPartitions: 2);
-        using var health = new StoreHealth(options, clock);
+        var health = new StoreHealth(options, clock);
 
         var limiters = new List<ResilientRateLimiter>();
 
@@ -50,7 +50,7 @@ public class PartitionCapTests
     {
         var clock = new FakeTimeProvider();
         var options = Options(maxWarmPartitions: 1);
-        using var health = new StoreHealth(options, clock);
+        var health = new StoreHealth(options, clock);
 
         var primaryOne = new FakeRateLimiter(permitLimit: 10);
         var fallbackOne = new FakeRateLimiter(permitLimit: 10);
@@ -77,7 +77,7 @@ public class PartitionCapTests
     {
         var clock = new FakeTimeProvider();
         var options = Options(maxWarmPartitions: 1);
-        using var health = new StoreHealth(options, clock);
+        var health = new StoreHealth(options, clock);
 
         var primaryOne = new FakeRateLimiter(permitLimit: 10);
         var fallbackOne = new FakeRateLimiter(permitLimit: 10);

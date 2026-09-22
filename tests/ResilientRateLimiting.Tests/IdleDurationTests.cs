@@ -134,7 +134,7 @@ public class IdleDurationTests
         options.FailuresBeforeOpen = 2;
         options.BreakDuration = TimeSpan.FromMinutes(10);
         options.MaxWarmPartitions = 1;
-        using var health = new StoreHealth(options, clock);
+        var health = new StoreHealth(options, clock);
 
         using var primary = new FakeRateLimiter { ReportedIdleDuration = TimeSpan.FromMinutes(5) }
             .AlwaysFail(new InvalidDataException("store down"));
