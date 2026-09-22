@@ -15,8 +15,12 @@ public sealed class ResilientRateLimiter : RateLimiter
     private readonly TimeProvider _timeProvider;
     private readonly StoreHealth _storeHealth;
     private readonly TimeSpan _retention;
+    private readonly TimeSpan _recoveryTime;
     private readonly int _maxWarmPartitions;
+    private readonly bool _warmFallback;
     private long _lastLocalConsumption = long.MinValue;
+    private long _recoveryUntil = long.MinValue;
+    private volatile bool _lastCallFellBack;
     private long _lastActivity;
     private int _released;
     private int _inFlight;
@@ -61,7 +65,9 @@ public sealed class ResilientRateLimiter : RateLimiter
         _retention = options.FallbackRecoveryTime < options.MaxWarmRetention
             ? options.FallbackRecoveryTime
             : options.MaxWarmRetention;
+        _recoveryTime = options.FallbackRecoveryTime;
         _maxWarmPartitions = options.MaxWarmPartitions;
+        _warmFallback = fallback is not null && options.FailureBehavior == StoreFailureBehavior.LocalFallback;
 
         _storeHealth.RegisterPartition();
     }
@@ -107,16 +113,27 @@ public sealed class ResilientRateLimiter : RateLimiter
 
         try
         {
+            var inRecovery = IsInRecovery();
+
+            if (inRecovery && TryRejectDuringRecovery(permitCount) is { } suppressed)
+            {
+                RecordActivity();
+
+                return suppressed;
+            }
+
             try
             {
                 var lease = await AcquireFromStoreAsync(permitCount, cancellationToken).ConfigureAwait(false);
 
                 RecordActivity();
 
-                if (lease.IsAcquired)
+                if (lease.IsAcquired && !inRecovery)
                 {
                     ConsumeLocalPermit(permitCount);
                 }
+
+                ArmRecovery();
 
                 return new ResilientRateLimitLease(lease, LeaseSource.Distributed);
             }
@@ -124,6 +141,8 @@ public sealed class ResilientRateLimiter : RateLimiter
             {
                 // Anything thrown from here on has nowhere left to go, and reaches the caller.
                 var served = await FallbackAsync(permitCount, cancellationToken).ConfigureAwait(false);
+
+                _lastCallFellBack = true;
 
                 RecordActivity();
 
@@ -223,17 +242,58 @@ public sealed class ResilientRateLimiter : RateLimiter
         }
     }
 
+    private bool IsInRecovery()
+    {
+        var until = Interlocked.Read(ref _recoveryUntil);
+
+        return until != long.MinValue && _timeProvider.GetTimestamp() < until;
+    }
+
+    /// <summary>Opens recovery mode once a call succeeds after the previous one fell back.</summary>
+    private void ArmRecovery()
+    {
+        if (!_warmFallback || !_lastCallFellBack)
+        {
+            return;
+        }
+
+        _lastCallFellBack = false;
+
+        Interlocked.Exchange(
+            ref _recoveryUntil,
+            _timeProvider.GetTimestamp() + (long)(_recoveryTime.TotalSeconds * _timeProvider.TimestampFrequency));
+    }
+
+    /// <summary>While recovering, the local counter answers first: it already mirrors what this replica admitted while the store was blind, so honouring its refusal suppresses the overshoot without writing anything back.</summary>
+    private RateLimitLease? TryRejectDuringRecovery(int permitCount)
+    {
+        try
+        {
+            using var local = _fallback!.AttemptAcquire(permitCount);
+            Interlocked.Exchange(ref _lastLocalConsumption, _timeProvider.GetTimestamp());
+
+            return local.IsAcquired
+                ? null
+                : new ResilientRateLimitLease(StaticLease.Rejected, LeaseSource.LocalFallback);
+        }
+        catch
+        {
+            // A local counter that cannot answer must not reject the request: the store decides.
+            return null;
+        }
+    }
+
     /// <summary>Mirrors an admitted request in the local counter and discards the answer.</summary>
     private void ConsumeLocalPermit(int permitCount)
     {
-        if (_fallback is null || _failureBehavior != StoreFailureBehavior.LocalFallback)
+        if (!_warmFallback)
         {
             return;
         }
 
         try
         {
-            using var warm = _fallback.AttemptAcquire(permitCount);
+            using var warm = _fallback!.AttemptAcquire(permitCount);
             Interlocked.Exchange(ref _lastLocalConsumption, _timeProvider.GetTimestamp());
         }
         catch
