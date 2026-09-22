@@ -24,7 +24,7 @@ public class PartitionEvictionTests
         using var fallback = new FakeRateLimiter(permitLimit: 10);
 
         using var partitioned = PartitionedRateLimiter.Create<string, string>(
-            _ => RateLimitPartition.Get("only", _ => new ResilientRateLimiter(primary, fallback, options, clock)));
+            _ => RateLimitPartition.Get("only", _ => new ResilientRateLimiter(primary, fallback, options, new StoreHealth(options, clock), clock)));
 
         (await partitioned.AcquireAsync("resource", 1, TestContext.Current.CancellationToken)).Dispose();
 

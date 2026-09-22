@@ -25,7 +25,7 @@ public class PartitionCapTests
         {
             var primary = new FakeRateLimiter(permitLimit: 10);
             var fallback = new FakeRateLimiter(permitLimit: 10);
-            limiters.Add(new ResilientRateLimiter(primary, fallback, options, clock, health));
+            limiters.Add(new ResilientRateLimiter(primary, fallback, options, health, clock));
         }
 
         foreach (var limiter in limiters)
@@ -54,11 +54,11 @@ public class PartitionCapTests
 
         var primaryOne = new FakeRateLimiter(permitLimit: 10);
         var fallbackOne = new FakeRateLimiter(permitLimit: 10);
-        var limiterOne = new ResilientRateLimiter(primaryOne, fallbackOne, options, clock, health);
+        var limiterOne = new ResilientRateLimiter(primaryOne, fallbackOne, options, health, clock);
 
         var primaryTwo = new FakeRateLimiter(permitLimit: 10);
         var fallbackTwo = new FakeRateLimiter(permitLimit: 10);
-        var limiterTwo = new ResilientRateLimiter(primaryTwo, fallbackTwo, options, clock, health);
+        var limiterTwo = new ResilientRateLimiter(primaryTwo, fallbackTwo, options, health, clock);
 
         (await limiterOne.AcquireAsync(1, TestContext.Current.CancellationToken)).Dispose();
         (await limiterTwo.AcquireAsync(1, TestContext.Current.CancellationToken)).Dispose();
@@ -81,11 +81,11 @@ public class PartitionCapTests
 
         var primaryOne = new FakeRateLimiter(permitLimit: 10);
         var fallbackOne = new FakeRateLimiter(permitLimit: 10);
-        using var limiterOne = new ResilientRateLimiter(primaryOne, fallbackOne, options, clock, health);
+        using var limiterOne = new ResilientRateLimiter(primaryOne, fallbackOne, options, health, clock);
 
         var primaryTwo = new FakeRateLimiter(permitLimit: 10);
         var fallbackTwo = new FakeRateLimiter(permitLimit: 10);
-        var limiterTwo = new ResilientRateLimiter(primaryTwo, fallbackTwo, options, clock, health);
+        var limiterTwo = new ResilientRateLimiter(primaryTwo, fallbackTwo, options, health, clock);
 
         limiterTwo.Dispose();
         limiterTwo.Dispose();

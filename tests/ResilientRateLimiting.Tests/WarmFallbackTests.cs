@@ -1,4 +1,4 @@
-using Microsoft.Extensions.Time.Testing;
+﻿using Microsoft.Extensions.Time.Testing;
 using System.Threading.RateLimiting;
 using Xunit;
 
@@ -6,6 +6,8 @@ namespace ResilientRateLimiting.Tests;
 
 public class WarmFallbackTests
 {
+    private readonly FakeTimeProvider _clock = new();
+
     private static ResilientRateLimiterOptions Options() => new()
     {
         ExpectedReplicaCount = 3,
@@ -17,7 +19,7 @@ public class WarmFallbackTests
     {
         using var primary = new FakeRateLimiter(permitLimit: 10);
         using var fallback = new FakeRateLimiter(permitLimit: 10);
-        using var limiter = new ResilientRateLimiter(primary, fallback, Options(), new FakeTimeProvider());
+        using var limiter = new ResilientRateLimiter(primary, fallback, Options(), new StoreHealth(Options(), _clock), _clock);
         var cancellationToken = TestContext.Current.CancellationToken;
 
         (await limiter.AcquireAsync(1, cancellationToken)).Dispose();
@@ -31,7 +33,7 @@ public class WarmFallbackTests
     {
         using var primary = new FakeRateLimiter(permitLimit: 0);
         using var fallback = new FakeRateLimiter(permitLimit: 10);
-        using var limiter = new ResilientRateLimiter(primary, fallback, Options(), new FakeTimeProvider());
+        using var limiter = new ResilientRateLimiter(primary, fallback, Options(), new StoreHealth(Options(), _clock), _clock);
 
         using var lease = await limiter.AcquireAsync(1, TestContext.Current.CancellationToken);
 
@@ -45,7 +47,7 @@ public class WarmFallbackTests
         var options = Options();
         using var primary = new FakeRateLimiter(permitLimit: 10).FailTimes(0);
         using var fallback = new FakeRateLimiter(permitLimit: 3);
-        using var limiter = new ResilientRateLimiter(primary, fallback, options, new FakeTimeProvider());
+        using var limiter = new ResilientRateLimiter(primary, fallback, options, new StoreHealth(options, _clock), _clock);
         var cancellationToken = TestContext.Current.CancellationToken;
 
         for (var i = 0; i < 3; i++)
@@ -64,7 +66,7 @@ public class WarmFallbackTests
     {
         using var primary = new FakeRateLimiter(permitLimit: 10);
         using var fallback = new FakeRateLimiter(permitLimit: 10);
-        using var limiter = new ResilientRateLimiter(primary, fallback, Options(), new FakeTimeProvider());
+        using var limiter = new ResilientRateLimiter(primary, fallback, Options(), new StoreHealth(Options(), _clock), _clock);
 
         using var lease = await limiter.AcquireAsync(4, TestContext.Current.CancellationToken);
 
@@ -84,7 +86,7 @@ public class WarmFallbackTests
             QueueLimit = 0,
             AutoReplenishment = false,
         });
-        using var limiter = new ResilientRateLimiter(primary, fallback, Options(), new FakeTimeProvider());
+        using var limiter = new ResilientRateLimiter(primary, fallback, Options(), new StoreHealth(Options(), _clock), _clock);
 
         using var lease = await limiter.AcquireAsync(50, TestContext.Current.CancellationToken);
 
@@ -99,7 +101,7 @@ public class WarmFallbackTests
         using var primary = new FakeRateLimiter(permitLimit: 10);
         using var fallback = new FakeRateLimiter(permitLimit: 10)
             .ThrowsOnAttemptAcquire(new InvalidOperationException("mirror broken"));
-        using var limiter = new ResilientRateLimiter(primary, fallback, Options(), new FakeTimeProvider());
+        using var limiter = new ResilientRateLimiter(primary, fallback, Options(), new StoreHealth(Options(), _clock), _clock);
 
         using var lease = await limiter.AcquireAsync(1, TestContext.Current.CancellationToken);
 

@@ -1,4 +1,4 @@
-using Microsoft.Extensions.Time.Testing;
+﻿using Microsoft.Extensions.Time.Testing;
 using System.Threading.RateLimiting;
 using Xunit;
 
@@ -29,7 +29,7 @@ public class StoreHealthTests
         using var health = new StoreHealth(options, clock);
         using var primary = new FakeRateLimiter().AlwaysFail(new InvalidDataException("store down"));
         using var fallback = new FakeRateLimiter(permitLimit: 100);
-        using var limiter = new ResilientRateLimiter(primary, fallback, options, clock, health);
+        using var limiter = new ResilientRateLimiter(primary, fallback, options, health, clock);
 
         for (var i = 0; i < 2; i++)
         {
@@ -55,8 +55,8 @@ public class StoreHealthTests
         using var fallbackA = new FakeRateLimiter(permitLimit: 100);
         using var fallbackB = new FakeRateLimiter(permitLimit: 100);
 
-        using var partitionA = new ResilientRateLimiter(failingPrimary, fallbackA, options, clock, health);
-        using var partitionB = new ResilientRateLimiter(healthyPrimary, fallbackB, options, clock, health);
+        using var partitionA = new ResilientRateLimiter(failingPrimary, fallbackA, options, health, clock);
+        using var partitionB = new ResilientRateLimiter(healthyPrimary, fallbackB, options, health, clock);
 
         for (var i = 0; i < 2; i++)
         {
@@ -77,7 +77,7 @@ public class StoreHealthTests
         using var health = new StoreHealth(options, clock);
         using var primary = new FakeRateLimiter(permitLimit: 100).FailTimes(2, new InvalidDataException("blip"));
         using var fallback = new FakeRateLimiter(permitLimit: 100);
-        using var limiter = new ResilientRateLimiter(primary, fallback, options, clock, health);
+        using var limiter = new ResilientRateLimiter(primary, fallback, options, health, clock);
 
         for (var i = 0; i < 2; i++)
         {
@@ -112,7 +112,7 @@ public class StoreHealthTests
 
         using var primary = new FakeRateLimiter().AlwaysFail(new InvalidDataException("store down"));
         using var fallback = new FakeRateLimiter(permitLimit: 100);
-        using var limiter = new ResilientRateLimiter(primary, fallback, Options(), clock, health);
+        using var limiter = new ResilientRateLimiter(primary, fallback, Options(), health, clock);
 
         for (var i = 0; i < 4; i++)
         {
@@ -130,7 +130,7 @@ public class StoreHealthTests
         using var health = new StoreHealth(options, clock);
         using var primary = new FakeRateLimiter(permitLimit: 100);
         using var fallback = new FakeRateLimiter(permitLimit: 100);
-        using var limiter = new ResilientRateLimiter(primary, fallback, options, clock, health);
+        using var limiter = new ResilientRateLimiter(primary, fallback, options, health, clock);
 
         (await limiter.AcquireAsync(1, TestContext.Current.CancellationToken)).Dispose();
         primary.AlwaysFail(new InvalidDataException("store down"));
@@ -155,7 +155,7 @@ public class StoreHealthTests
         using var health = new StoreHealth(options, clock);
         using var primary = new FakeRateLimiter(permitLimit: 100);
         using var fallback = new FakeRateLimiter(permitLimit: 100);
-        using var limiter = new ResilientRateLimiter(primary, fallback, options, clock, health);
+        using var limiter = new ResilientRateLimiter(primary, fallback, options, health, clock);
 
         (await limiter.AcquireAsync(1, TestContext.Current.CancellationToken)).Dispose();
         primary.AlwaysFail(new InvalidDataException("store down"));
@@ -169,26 +169,6 @@ public class StoreHealthTests
         using var afterBreak = await limiter.AcquireAsync(1, TestContext.Current.CancellationToken);
 
         Assert.Equal(LeaseSource.LocalFallback, SourceOf(afterBreak));
-        Assert.Equal(attemptsWhenOpened, primary.AcquireAttempts);
-    }
-
-    [Fact]
-    public async Task Builds_its_own_store_health_when_none_is_supplied()
-    {
-        var clock = new FakeTimeProvider();
-        var options = Options();
-        using var primary = new FakeRateLimiter().AlwaysFail(new InvalidDataException("store down"));
-        using var fallback = new FakeRateLimiter(permitLimit: 100);
-        using var limiter = new ResilientRateLimiter(primary, fallback, options, clock);
-
-        for (var i = 0; i < 2; i++)
-        {
-            (await limiter.AcquireAsync(1, TestContext.Current.CancellationToken)).Dispose();
-        }
-
-        var attemptsWhenOpened = primary.AcquireAttempts;
-        (await limiter.AcquireAsync(1, TestContext.Current.CancellationToken)).Dispose();
-
         Assert.Equal(attemptsWhenOpened, primary.AcquireAttempts);
     }
 }

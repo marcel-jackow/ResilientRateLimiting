@@ -1,4 +1,4 @@
-using RedisRateLimiting;
+﻿using RedisRateLimiting;
 using StackExchange.Redis;
 using System.Threading.RateLimiting;
 using Testcontainers.Redis;
@@ -25,6 +25,16 @@ public class OutageTests : IAsyncLifetime
 
         var connection = await ConnectionMultiplexer.ConnectAsync(_container.GetConnectionString());
 
+        var options = new ResilientRateLimiterOptions
+        {
+            ExpectedReplicaCount = 3,
+            FallbackRecoveryTime = TimeSpan.FromMinutes(1),
+            StoreTimeout = TimeSpan.FromMilliseconds(200),
+            FailuresBeforeOpen = 2,
+            BreakDuration = TimeSpan.FromSeconds(5),
+            BreakerSamplingDuration = TimeSpan.FromSeconds(10),
+        };
+
         using var limiter = new ResilientRateLimiter(
             primary: new RedisSlidingWindowRateLimiter<string>(partitionKey, new RedisSlidingWindowRateLimiterOptions
             {
@@ -38,15 +48,8 @@ public class OutageTests : IAsyncLifetime
                 Window = TimeSpan.FromMinutes(1),
                 QueueLimit = 0,
             }),
-            options: new ResilientRateLimiterOptions
-            {
-                ExpectedReplicaCount = 3,
-                FallbackRecoveryTime = TimeSpan.FromMinutes(1),
-                StoreTimeout = TimeSpan.FromMilliseconds(200),
-                FailuresBeforeOpen = 2,
-                BreakDuration = TimeSpan.FromSeconds(5),
-                BreakerSamplingDuration = TimeSpan.FromSeconds(10),
-            });
+            options: options,
+            storeHealth: new StoreHealth(options));
 
         using (var healthy = await limiter.AcquireAsync(1, cancellationToken))
         {

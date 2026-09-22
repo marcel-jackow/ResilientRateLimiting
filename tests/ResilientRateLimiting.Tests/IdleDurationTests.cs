@@ -1,10 +1,12 @@
-using Microsoft.Extensions.Time.Testing;
+﻿using Microsoft.Extensions.Time.Testing;
 using Xunit;
 
 namespace ResilientRateLimiting.Tests;
 
 public class IdleDurationTests
 {
+    private readonly FakeTimeProvider _clock = new();
+
     private static ResilientRateLimiterOptions Options() => new()
     {
         ExpectedReplicaCount = 3,
@@ -17,7 +19,7 @@ public class IdleDurationTests
     {
         using var primary = new FakeRateLimiter(permitLimit: 10) { ReportedIdleDuration = TimeSpan.FromMinutes(5) };
         using var fallback = new FakeRateLimiter(permitLimit: 10);
-        using var limiter = new ResilientRateLimiter(primary, fallback, Options(), new FakeTimeProvider());
+        using var limiter = new ResilientRateLimiter(primary, fallback, Options(), new StoreHealth(Options(), _clock), _clock);
 
         Assert.Equal(primary.IdleDuration, limiter.IdleDuration);
     }
@@ -28,7 +30,7 @@ public class IdleDurationTests
         var clock = new FakeTimeProvider();
         using var primary = new FakeRateLimiter(permitLimit: 10);
         using var fallback = new FakeRateLimiter(permitLimit: 10);
-        using var limiter = new ResilientRateLimiter(primary, fallback, Options(), clock);
+        using var limiter = new ResilientRateLimiter(primary, fallback, Options(), new StoreHealth(Options(), clock), clock);
 
         (await limiter.AcquireAsync(1, TestContext.Current.CancellationToken)).Dispose();
         clock.Advance(TimeSpan.FromSeconds(30));
@@ -42,7 +44,7 @@ public class IdleDurationTests
         var clock = new FakeTimeProvider();
         using var primary = new FakeRateLimiter(permitLimit: 10);
         using var fallback = new FakeRateLimiter(permitLimit: 10);
-        using var limiter = new ResilientRateLimiter(primary, fallback, Options(), clock);
+        using var limiter = new ResilientRateLimiter(primary, fallback, Options(), new StoreHealth(Options(), clock), clock);
 
         (await limiter.AcquireAsync(1, TestContext.Current.CancellationToken)).Dispose();
         clock.Advance(TimeSpan.FromSeconds(61));
@@ -56,7 +58,7 @@ public class IdleDurationTests
         var clock = new FakeTimeProvider();
         using var primary = new FakeRateLimiter(permitLimit: 10);
         using var fallback = new FakeRateLimiter(permitLimit: 10);
-        using var limiter = new ResilientRateLimiter(primary, fallback, Options(), clock);
+        using var limiter = new ResilientRateLimiter(primary, fallback, Options(), new StoreHealth(Options(), clock), clock);
 
         (await limiter.AcquireAsync(1, TestContext.Current.CancellationToken)).Dispose();
         clock.Advance(TimeSpan.FromMinutes(1));
@@ -70,7 +72,7 @@ public class IdleDurationTests
         var clock = new FakeTimeProvider();
         using var primary = new FakeRateLimiter().AlwaysFail(new InvalidDataException("store down"));
         using var fallback = new FakeRateLimiter(permitLimit: 10);
-        using var limiter = new ResilientRateLimiter(primary, fallback, Options(), clock);
+        using var limiter = new ResilientRateLimiter(primary, fallback, Options(), new StoreHealth(Options(), clock), clock);
 
         (await limiter.AcquireAsync(1, TestContext.Current.CancellationToken)).Dispose();
         clock.Advance(TimeSpan.FromSeconds(30));
@@ -88,7 +90,7 @@ public class IdleDurationTests
 
         using var primary = new FakeRateLimiter(permitLimit: 10);
         using var fallback = new FakeRateLimiter(permitLimit: 10);
-        using var limiter = new ResilientRateLimiter(primary, fallback, options, clock);
+        using var limiter = new ResilientRateLimiter(primary, fallback, options, new StoreHealth(options, clock), clock);
 
         (await limiter.AcquireAsync(1, TestContext.Current.CancellationToken)).Dispose();
 
@@ -108,7 +110,7 @@ public class IdleDurationTests
 
         using var primary = new FakeRateLimiter(permitLimit: 10);
         using var fallback = new FakeRateLimiter(permitLimit: 10);
-        using var limiter = new ResilientRateLimiter(primary, fallback, options, clock);
+        using var limiter = new ResilientRateLimiter(primary, fallback, options, new StoreHealth(options, clock), clock);
 
         (await limiter.AcquireAsync(1, TestContext.Current.CancellationToken)).Dispose();
         clock.Advance(TimeSpan.FromSeconds(11));
@@ -137,10 +139,10 @@ public class IdleDurationTests
         using var primary = new FakeRateLimiter { ReportedIdleDuration = TimeSpan.FromMinutes(5) }
             .AlwaysFail(new InvalidDataException("store down"));
         using var fallback = new FakeRateLimiter(permitLimit: 100);
-        using var limiter = new ResilientRateLimiter(primary, fallback, options, clock, health);
+        using var limiter = new ResilientRateLimiter(primary, fallback, options, health, clock);
 
         using var other = new ResilientRateLimiter(
-            new FakeRateLimiter(permitLimit: 10), new FakeRateLimiter(permitLimit: 10), options, clock, health);
+            new FakeRateLimiter(permitLimit: 10), new FakeRateLimiter(permitLimit: 10), options, health, clock);
 
         for (var i = 0; i < 2; i++)
         {

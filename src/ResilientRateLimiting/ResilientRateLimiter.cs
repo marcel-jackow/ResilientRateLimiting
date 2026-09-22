@@ -14,7 +14,6 @@ public sealed class ResilientRateLimiter : RateLimiter
     private readonly Func<Exception, bool>? _shouldHandle;
     private readonly TimeProvider _timeProvider;
     private readonly StoreHealth _storeHealth;
-    private readonly bool _ownsStoreHealth;
     private readonly TimeSpan _retention;
     private readonly int _maxWarmPartitions;
     private long _lastLocalConsumption = long.MinValue;
@@ -25,17 +24,18 @@ public sealed class ResilientRateLimiter : RateLimiter
     /// <param name="primary">The limiter backed by the shared store.</param>
     /// <param name="fallback">In-memory window or token-bucket limiter, required for <see cref="StoreFailureBehavior.LocalFallback"/>; never a <see cref="ConcurrencyLimiter"/>, which hands its permit back when the lease is disposed and so cannot hold warm state.</param>
     /// <param name="options">Configuration, validated here so a wrong setup fails at startup.</param>
+    /// <param name="storeHealth">One per store connection, shared by every limiter using that store; each limiter must be disposed, because the shared live-partition count only falls on disposal.</param>
     /// <param name="timeProvider">Defaults to <see cref="TimeProvider.System"/>.</param>
-    /// <param name="storeHealth">Shared across partitions of the same store, and every limiter sharing one must be disposed, because the shared live-partition count only falls on disposal; omitting it gives this partition its own breaker and disables the warm-partition cap.</param>
     public ResilientRateLimiter(
         RateLimiter primary,
         RateLimiter? fallback,
         ResilientRateLimiterOptions options,
-        TimeProvider? timeProvider = null,
-        StoreHealth? storeHealth = null)
+        StoreHealth storeHealth,
+        TimeProvider? timeProvider = null)
     {
         ArgumentNullException.ThrowIfNull(primary);
         ArgumentNullException.ThrowIfNull(options);
+        ArgumentNullException.ThrowIfNull(storeHealth);
         options.Validate();
 
         if (options.FailureBehavior == StoreFailureBehavior.LocalFallback)
@@ -56,8 +56,7 @@ public sealed class ResilientRateLimiter : RateLimiter
         _storeTimeout = options.StoreTimeout;
         _shouldHandle = options.ShouldHandle;
         _timeProvider = timeProvider ?? TimeProvider.System;
-        _ownsStoreHealth = storeHealth is null;
-        _storeHealth = storeHealth ?? new StoreHealth(options, _timeProvider);
+        _storeHealth = storeHealth;
         _retention = options.FallbackRecoveryTime < options.MaxWarmRetention
             ? options.FallbackRecoveryTime
             : options.MaxWarmRetention;
@@ -148,11 +147,6 @@ public sealed class ResilientRateLimiter : RateLimiter
 
         _primary.Dispose();
         _fallback?.Dispose();
-
-        if (_ownsStoreHealth)
-        {
-            _storeHealth.Dispose();
-        }
     }
 
     /// <inheritdoc />
@@ -165,11 +159,6 @@ public sealed class ResilientRateLimiter : RateLimiter
         if (_fallback is not null)
         {
             await _fallback.DisposeAsync().ConfigureAwait(false);
-        }
-
-        if (_ownsStoreHealth)
-        {
-            _storeHealth.Dispose();
         }
     }
 
