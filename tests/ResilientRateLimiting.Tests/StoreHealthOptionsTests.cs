@@ -15,13 +15,10 @@ public class StoreHealthOptionsTests
     }
 
     [Fact]
-    public void Requires_a_replica_count_whatever_the_limiters_on_the_store_do()
+    public void Accepts_a_store_connection_that_never_sizes_a_local_budget()
     {
-        // Store-scoped, so its necessity no longer depends on any limiter's failure behaviour.
-        var options = new StoreHealthOptions { ExpectedReplicaCount = 0 };
-
-        var error = Assert.Throws<InvalidOperationException>(options.Validate);
-        Assert.Contains(nameof(StoreHealthOptions.ExpectedReplicaCount), error.Message);
+        // A fail-open deployment has no fallback limiter to size, so it owes no replica count.
+        new StoreHealthOptions().Validate();
     }
 
     [Theory]

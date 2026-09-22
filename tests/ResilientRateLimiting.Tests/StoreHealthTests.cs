@@ -26,6 +26,36 @@ public class StoreHealthTests
     }
 
     [Fact]
+    public async Task A_predicate_that_excuses_the_exception_keeps_the_breaker_closed()
+    {
+        var clock = new FakeTimeProvider();
+        var health = new StoreHealth(
+            new StoreHealthOptions
+            {
+                ExpectedReplicaCount = 3,
+                FailuresBeforeOpen = 2,
+                BreakerSamplingDuration = TimeSpan.FromSeconds(10),
+                BreakDuration = TimeSpan.FromSeconds(5),
+                ShouldHandle = _ => false,
+            },
+            clock);
+
+        using var primary = new FakeRateLimiter().AlwaysFail(new InvalidDataException("store down"));
+        using var fallback = new FakeRateLimiter(permitLimit: 100);
+        using var limiter = new ResilientRateLimiter(primary, fallback, Options(), health, clock);
+
+        // Nothing is a store failure, so the breaker scores no failures and never opens: the store
+        // is asked every time, and the exception reaches the caller every time.
+        for (var i = 0; i < 4; i++)
+        {
+            await Assert.ThrowsAsync<InvalidDataException>(
+                async () => await limiter.AcquireAsync(1, TestContext.Current.CancellationToken));
+        }
+
+        Assert.Equal(4, primary.AcquireAttempts);
+    }
+
+    [Fact]
     public async Task Stops_calling_the_store_once_the_breaker_opens()
     {
         var clock = new FakeTimeProvider();
@@ -109,7 +139,8 @@ public class StoreHealthTests
     {
         var clock = new FakeTimeProvider();
         var options = Options();
-        var health = new StoreHealth(StoreOptions(), clock);
+        var storeOptions = StoreOptions();
+        var health = new StoreHealth(storeOptions, clock);
         using var primary = new FakeRateLimiter(permitLimit: 100);
         using var fallback = new FakeRateLimiter(permitLimit: 100);
         using var limiter = new ResilientRateLimiter(primary, fallback, options, health, clock);
@@ -117,7 +148,7 @@ public class StoreHealthTests
         (await limiter.AcquireAsync(1, TestContext.Current.CancellationToken)).Dispose();
         primary.AlwaysFail(new InvalidDataException("store down"));
 
-        for (var i = 0; i < StoreOptions().FailuresBeforeOpen; i++)
+        for (var i = 0; i < storeOptions.FailuresBeforeOpen; i++)
         {
             (await limiter.AcquireAsync(1, TestContext.Current.CancellationToken)).Dispose();
         }
@@ -149,7 +180,7 @@ public class StoreHealthTests
         (await limiter.AcquireAsync(1, TestContext.Current.CancellationToken)).Dispose();
         primary.AlwaysFail(new InvalidDataException("store down"));
 
-        for (var i = 0; i < StoreOptions().FailuresBeforeOpen; i++)
+        for (var i = 0; i < storeOptions.FailuresBeforeOpen; i++)
         {
             (await limiter.AcquireAsync(1, TestContext.Current.CancellationToken)).Dispose();
         }

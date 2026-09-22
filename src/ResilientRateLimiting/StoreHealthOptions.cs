@@ -27,7 +27,7 @@ public sealed class StoreHealthOptions
     /// <summary>Scales the local budget until some limiter on this store first reaches it. 1.0 means no effect.</summary>
     public double ColdStartFallbackFactor { get; init; } = 1.0;
 
-    /// <summary>Replicas normally running. The local fallback budget is the shared limit divided by this.</summary>
+    /// <summary>Replicas normally running. Read only by <see cref="LocalPermitLimit"/>, which sizes the fallback limiter the caller supplies.</summary>
     public int ExpectedReplicaCount { get; init; }
 
     /// <summary>Overrides classification. True treats the exception as a store failure.</summary>
@@ -88,13 +88,6 @@ public sealed class StoreHealthOptions
         if (MaxWarmPartitions < 1)
         {
             throw new InvalidOperationException($"{nameof(MaxWarmPartitions)} must be at least 1.");
-        }
-
-        if (ExpectedReplicaCount < 1)
-        {
-            throw new InvalidOperationException(
-                $"{nameof(ExpectedReplicaCount)} must be set. There is no safe default: the library " +
-                "cannot know how many replicas you run.");
         }
     }
 }

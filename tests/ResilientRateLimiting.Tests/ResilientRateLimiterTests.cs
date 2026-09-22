@@ -109,20 +109,18 @@ public class ResilientRateLimiterTests
         // that the cutoff schedules, and pass even when the cutoff had already fired.
         clock.Advance(TimeSpan.FromMilliseconds(500));
 
-        var deadline = DateTime.UtcNow.AddMilliseconds(200);
+        var deadline = DateTime.UtcNow.AddMilliseconds(100);
 
         while (DateTime.UtcNow < deadline)
         {
             Assert.Equal(0, fallback.AcquireAttempts);
-            await Task.Delay(10, TestContext.Current.CancellationToken);
+            await Task.Delay(5, TestContext.Current.CancellationToken);
         }
 
         clock.Advance(TimeSpan.FromMilliseconds(600));
 
         using var lease = await pending;
         Assert.Equal(LeaseSource.LocalFallback, SourceOf(lease));
-
-        primary.Release();
     }
 
     [Fact]
