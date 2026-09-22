@@ -96,6 +96,26 @@ public class WarmFallbackTests
     }
 
     [Fact]
+    public async Task The_warm_mirror_stops_at_zero_and_cannot_record_an_overshoot()
+    {
+        using var primary = new FakeRateLimiter(permitLimit: 1000);
+        using var fallback = new FakeRateLimiter(permitLimit: 10);
+        using var limiter = new ResilientRateLimiter(primary, fallback, Options(), new StoreHealth(Options(), _clock), _clock);
+        var cancellationToken = TestContext.Current.CancellationToken;
+
+        // A shared limit of 100 over 10 replicas is a local share of 10, and this replica takes 15.
+        for (var i = 0; i < 15; i++)
+        {
+            using var lease = await limiter.AcquireAsync(1, cancellationToken);
+            Assert.True(lease.IsAcquired);
+            Assert.Equal(LeaseSource.Distributed, SourceOf(lease));
+        }
+
+        // The mirror holds "my whole share is spent", never "I am five over it".
+        Assert.Equal(0, fallback.AvailablePermits);
+    }
+
+    [Fact]
     public async Task A_request_above_the_local_budget_is_rejected_when_the_store_is_down()
     {
         using var primary = new FakeRateLimiter(permitLimit: 100).AlwaysFail(new InvalidDataException("store down"));
