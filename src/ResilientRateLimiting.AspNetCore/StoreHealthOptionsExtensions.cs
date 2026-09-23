@@ -25,8 +25,8 @@ public static class StoreHealthOptionsExtensions
         {
             OnStoreFailure = exception =>
             {
-                existing?.Invoke(exception);
                 logger.LogWarning(exception, MessageTemplate, exception.GetType().Name);
+                existing?.Invoke(exception);
             },
         };
     }

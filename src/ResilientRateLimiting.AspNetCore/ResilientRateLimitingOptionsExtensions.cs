@@ -40,7 +40,7 @@ public static class ResilientRateLimitingOptionsExtensions
                 && metadata is TimeSpan retryAfter)
             {
                 var wholeSeconds = Math.Ceiling(retryAfter.TotalSeconds);
-                var seconds = wholeSeconds >= int.MaxValue ? int.MaxValue : (int)wholeSeconds;
+                var seconds = wholeSeconds >= int.MaxValue ? int.MaxValue : Math.Max(0, (int)wholeSeconds);
 
                 context.HttpContext.Response.Headers.RetryAfter =
                     seconds.ToString(NumberFormatInfo.InvariantInfo);

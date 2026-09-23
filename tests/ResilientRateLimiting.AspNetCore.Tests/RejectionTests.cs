@@ -93,6 +93,24 @@ public class RejectionTests
     }
 
     [Fact]
+    public async Task Clamps_a_negative_retry_after_to_zero()
+    {
+        var options = new RateLimiterOptions();
+        options.UseResilientDefaults();
+
+        var context = new DefaultHttpContext();
+        var rejection = new OnRejectedContext
+        {
+            HttpContext = context,
+            Lease = new RejectedLease(TimeSpan.FromSeconds(-5)),
+        };
+
+        await options.OnRejected!(rejection, CancellationToken.None);
+
+        Assert.Equal("0", context.Response.Headers.RetryAfter);
+    }
+
+    [Fact]
     public async Task Saturates_instead_of_throwing_for_a_huge_retry_after()
     {
         var options = new RateLimiterOptions();

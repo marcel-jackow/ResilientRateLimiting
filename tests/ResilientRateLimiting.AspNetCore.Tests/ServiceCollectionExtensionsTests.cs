@@ -75,4 +75,35 @@ public class ServiceCollectionExtensionsTests
 
         Assert.Same(first, second);
     }
+
+    [Fact]
+    public void A_second_call_throws_instead_of_merging_into_the_first_store_connection()
+    {
+        var configuration = ConfigurationFrom([]);
+
+        var services = new ServiceCollection();
+        services.AddLogging();
+        services.AddResilientRateLimiting(configuration);
+
+        var exception = Assert.Throws<InvalidOperationException>(
+            () => services.AddResilientRateLimiting(configuration));
+
+        Assert.Contains("AddResilientRateLimiting", exception.Message);
+        Assert.Contains("StoreHealth", exception.Message);
+    }
+
+    [Fact]
+    public void Resolves_without_AddLogging_in_the_collection()
+    {
+        var configuration = ConfigurationFrom([]);
+
+        var services = new ServiceCollection();
+        services.AddResilientRateLimiting(configuration);
+
+        using var provider = services.BuildServiceProvider();
+
+        var storeHealth = provider.GetRequiredService<StoreHealth>();
+
+        Assert.NotNull(storeHealth);
+    }
 }

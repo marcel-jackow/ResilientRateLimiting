@@ -1,6 +1,8 @@
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 
 namespace ResilientRateLimiting.AspNetCore;
@@ -12,6 +14,7 @@ public static class ServiceCollectionExtensions
     /// Binds <see cref="StoreHealthOptions"/> from <paramref name="storeHealthSection"/>, validates them at
     /// startup, and registers one singleton <see cref="StoreHealth"/> for this store connection with logging
     /// attached. Resolve it in a policy lambda via <c>context.RequestServices.GetRequiredService&lt;StoreHealth&gt;()</c>.
+    /// Call this once per application; for a second store connection, build a further <see cref="StoreHealth"/> by hand.
     /// </summary>
     /// <param name="services">The service collection to add to.</param>
     /// <param name="storeHealthSection">The configuration section for this store connection.</param>
@@ -23,13 +26,23 @@ public static class ServiceCollectionExtensions
         ArgumentNullException.ThrowIfNull(services);
         ArgumentNullException.ThrowIfNull(storeHealthSection);
 
+        if (services.Any(descriptor => descriptor.ServiceType == typeof(StoreHealth)))
+        {
+            throw new InvalidOperationException(
+                "AddResilientRateLimiting was already called on this service collection. It registers one store " +
+                "connection per application; for a second store connection, build a further StoreHealth instance " +
+                "by hand instead of calling this method again.");
+        }
+
         services.AddOptions<StoreHealthOptions>().Bind(storeHealthSection).ValidateOnStart();
-        services.AddSingleton<IValidateOptions<StoreHealthOptions>, ValidateStoreHealthOptions>();
+        services.TryAddEnumerable(
+            ServiceDescriptor.Singleton<IValidateOptions<StoreHealthOptions>, ValidateStoreHealthOptions>());
 
         services.AddSingleton(provider =>
         {
             var options = provider.GetRequiredService<IOptions<StoreHealthOptions>>().Value;
-            var logger = provider.GetRequiredService<ILoggerFactory>().CreateLogger("ResilientRateLimiting");
+            var loggerFactory = provider.GetService<ILoggerFactory>() ?? NullLoggerFactory.Instance;
+            var logger = loggerFactory.CreateLogger("ResilientRateLimiting");
             var timeProvider = provider.GetService<TimeProvider>() ?? TimeProvider.System;
 
             return new StoreHealth(options.WithLogging(logger), timeProvider);

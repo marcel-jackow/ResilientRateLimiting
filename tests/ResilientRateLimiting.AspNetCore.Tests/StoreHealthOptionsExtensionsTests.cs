@@ -50,6 +50,23 @@ public class StoreHealthOptionsExtensionsTests
     }
 
     [Fact]
+    public void Still_logs_the_warning_when_the_pre_existing_callback_throws()
+    {
+        var logger = new RecordingLogger();
+        var options = new StoreHealthOptions
+        {
+            OnStoreFailure = _ => throw new InvalidOperationException("pre-existing callback blew up"),
+        }.WithLogging(logger);
+        var exception = new InvalidOperationException("boom");
+
+        Assert.Throws<InvalidOperationException>(() => options.OnStoreFailure!(exception));
+
+        var entry = Assert.Single(logger.Entries);
+        Assert.Equal(LogLevel.Warning, entry.Level);
+        Assert.Same(exception, entry.Exception);
+    }
+
+    [Fact]
     public void Logs_one_warning_per_distinct_exception_type_reported_by_store_health()
     {
         var logger = new RecordingLogger();
