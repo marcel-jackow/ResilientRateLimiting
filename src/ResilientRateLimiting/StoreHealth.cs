@@ -30,6 +30,11 @@ public sealed class StoreHealth
                 MinimumThroughput = options.FailuresBeforeOpen,
                 SamplingDuration = options.BreakerSamplingDuration,
                 BreakDuration = options.BreakDuration,
+                OnClosed = args =>
+                {
+                    ForgetReportedFailureTypes();
+                    return default;
+                },
             })
             .Build();
     }
@@ -69,6 +74,19 @@ public sealed class StoreHealth
         catch
         {
             // See the summary: a throwing callback has nowhere useful to go.
+        }
+    }
+
+    /// <summary>Clears the reported-types memory so the next outage reports each type again. Called from Polly's OnClosed on the half-open-to-closed transition, i.e. once per outage, not on every successful store call.</summary>
+    private void ForgetReportedFailureTypes()
+    {
+        try
+        {
+            _reportedFailureTypes.Clear();
+        }
+        catch
+        {
+            // Never let a Polly transition callback throw.
         }
     }
 }

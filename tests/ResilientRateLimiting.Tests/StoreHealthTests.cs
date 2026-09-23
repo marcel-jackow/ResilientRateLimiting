@@ -188,4 +188,77 @@ public class StoreHealthTests
         Assert.Equal(LeaseSource.LocalFallback, SourceOf(afterBreak));
         Assert.Equal(attemptsWhenOpened, primary.AcquireAttempts);
     }
+
+    [Fact]
+    public async Task Reports_the_same_exception_type_again_once_the_breaker_closes_and_a_new_outage_begins()
+    {
+        var clock = new FakeTimeProvider();
+        var options = Options();
+        var reported = new List<Exception>();
+        var storeOptions = new StoreHealthOptions
+        {
+            FailuresBeforeOpen = 2,
+            BreakerSamplingDuration = TimeSpan.FromSeconds(10),
+            BreakDuration = TimeSpan.FromSeconds(5),
+            OnStoreFailure = reported.Add,
+        };
+        var health = new StoreHealth(storeOptions, clock);
+        using var primary = new FakeRateLimiter(permitLimit: 100).AlwaysFail(new InvalidDataException("store down"));
+        using var fallback = new FakeRateLimiter(permitLimit: 100);
+        using var limiter = new ResilientRateLimiter(primary, fallback, options, health, clock);
+
+        for (var i = 0; i < 2; i++)
+        {
+            (await limiter.AcquireAsync(1, TestContext.Current.CancellationToken)).Dispose();
+        }
+
+        Assert.Single(reported);
+
+        // Past BreakDuration, a successful probe closes the breaker: this ends the outage.
+        clock.Advance(TimeSpan.FromSeconds(6));
+        primary.FailTimes(0);
+        using var probe = await limiter.AcquireAsync(1, TestContext.Current.CancellationToken);
+        Assert.Equal(LeaseSource.Distributed, SourceOf(probe));
+        Assert.Single(reported);
+
+        // The same exception type, in a new outage, is reported again.
+        primary.AlwaysFail(new InvalidDataException("store down again"));
+        (await limiter.AcquireAsync(1, TestContext.Current.CancellationToken)).Dispose();
+
+        Assert.Equal(2, reported.Count);
+        Assert.All(reported, exception => Assert.IsType<InvalidDataException>(exception));
+    }
+
+    [Fact]
+    public async Task Intermittent_failures_that_never_open_the_breaker_are_reported_only_once()
+    {
+        var clock = new FakeTimeProvider();
+        var options = Options();
+        var reported = new List<Exception>();
+        var storeOptions = new StoreHealthOptions
+        {
+            FailuresBeforeOpen = 2,
+            BreakerSamplingDuration = TimeSpan.FromSeconds(10),
+            BreakDuration = TimeSpan.FromSeconds(5),
+            OnStoreFailure = reported.Add,
+        };
+        var health = new StoreHealth(storeOptions, clock);
+        using var primary = new FakeRateLimiter(permitLimit: 100);
+        using var fallback = new FakeRateLimiter(permitLimit: 100);
+        using var limiter = new ResilientRateLimiter(primary, fallback, options, health, clock);
+
+        // A success dilutes the failure ratio below the default FailureRatio of 1.0, so the
+        // breaker never opens no matter how many times this cycle repeats.
+        for (var cycle = 0; cycle < 3; cycle++)
+        {
+            (await limiter.AcquireAsync(1, TestContext.Current.CancellationToken)).Dispose();
+
+            primary.AlwaysFail(new InvalidDataException("blip"));
+            (await limiter.AcquireAsync(1, TestContext.Current.CancellationToken)).Dispose();
+
+            primary.FailTimes(0);
+        }
+
+        Assert.Single(reported);
+    }
 }
