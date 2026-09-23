@@ -4,6 +4,12 @@ namespace ResilientRateLimiting.Tests;
 
 public class LocalBudgetTests
 {
+    [Fact]
+    public void Splits_a_limit_that_divides_evenly()
+    {
+        Assert.Equal(25, LocalBudget.ForReplicas(sharedPermitLimit: 100, replicaCount: 4));
+    }
+
     [Theory]
     [InlineData(100, 3, 34)]
     [InlineData(100, 1, 100)]
