@@ -21,6 +21,9 @@ public sealed record ResilientRateLimiterOptions
     /// <summary>Low-cardinality metric tag identifying this policy.</summary>
     public string PolicyName { get; init; } = "default";
 
+    /// <summary>The most time added to the Retry-After hint: a random spread so rejected callers do not return together, and a longer wait while the store is down. Zero adds nothing.</summary>
+    public TimeSpan MaxAddedRetryDelay { get; init; } = TimeSpan.FromSeconds(60);
+
     /// <summary>Throws when the configuration is incomplete or contradictory. Reports every violated rule, not just the first.</summary>
     /// <exception cref="InvalidOperationException">The configuration cannot be used. The message lists every violated rule, one per line.</exception>
     public void Validate()
@@ -38,6 +41,11 @@ public sealed record ResilientRateLimiterOptions
                 $"{nameof(FallbackRecoveryTime)} must be set when {nameof(FailureBehavior)} is " +
                 $"{nameof(StoreFailureBehavior.LocalFallback)}. A RateLimiter cannot be asked how long " +
                 "it takes to refill.");
+        }
+
+        if (MaxAddedRetryDelay < TimeSpan.Zero)
+        {
+            (errors ??= []).Add($"{nameof(MaxAddedRetryDelay)} must not be negative.");
         }
 
         if (errors is not null)

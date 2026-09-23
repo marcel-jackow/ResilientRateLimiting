@@ -6,6 +6,7 @@ namespace ResilientRateLimiting.Tests;
 
 public class ChainedRecoveryTests
 {
+    /// <summary>MaxAddedRetryDelay defaults to 60s (the record default) — not set explicitly here.</summary>
     private static ResilientRateLimiterOptions Options(
         StoreFailureBehavior behavior = StoreFailureBehavior.LocalFallback) => new()
     {
@@ -311,9 +312,9 @@ public class ChainedRecoveryTests
         Assert.False(suppressed.IsAcquired);
         Assert.True(suppressed.TryGetMetadata(MetadataName.RetryAfter.Name, out var retryAfter));
 
-        // Recovery counts as degraded (D34): the local limiter's 30s doubles to 60s, then the
-        // degraded jitter band (20-40%) widens it to somewhere in [72s, 84s] (D32-D35).
-        Assert.InRange((TimeSpan)retryAfter!, TimeSpan.FromSeconds(72), TimeSpan.FromSeconds(84));
+        // Recovery counts as degraded (D34), b=30s: lo=max(6,2)=6, hi=max(12,6)=12; hi'=min(12,60)=12,
+        // lo'=min(6,6)=6, jitter in [6s,12s]. doubling=min(30, 60-12)=30. 30 + 30 + [6,12] = [66s, 72s] (D32-D35).
+        Assert.InRange((TimeSpan)retryAfter!, TimeSpan.FromSeconds(66), TimeSpan.FromSeconds(72));
     }
 
     [Fact]

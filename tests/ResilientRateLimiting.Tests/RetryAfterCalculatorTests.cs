@@ -7,6 +7,7 @@ public class RetryAfterCalculatorTests
 {
     private static readonly TimeSpan BreakDuration = TimeSpan.FromSeconds(5);
 
+    /// <summary>FallbackRecoveryTime 60s; MaxAddedRetryDelay defaults to 60s (the record default).</summary>
     private static ResilientRateLimiterOptions Options() => new()
     {
         FallbackRecoveryTime = TimeSpan.FromSeconds(60),
@@ -44,24 +45,49 @@ public class RetryAfterCalculatorTests
     }
 
     [Fact]
-    public void Prefers_the_inner_value_and_jitters_it()
+    public void Prefers_the_inner_value_and_adds_the_low_end_of_the_band()
     {
         var calculator = new RetryAfterCalculator(Options(), BreakDuration, sampler: () => 0);
 
         var value = calculator.Compute(Rejected(TimeSpan.FromSeconds(10)), LeaseSource.Distributed);
 
-        // sampler 0 means the lowest jitter: +10%.
+        // lo = max(10%*10, 1s) = 1s, hi = max(20%*10, 3s) = 3s; hi' = min(3, 60) = 3, lo' = min(1, 1.5) = 1.
+        // sampler 0 -> jitter = 1s; no doubling (normal). 10 + 1 = 11s.
         Assert.Equal(TimeSpan.FromSeconds(11), value);
     }
 
     [Fact]
-    public void Uses_the_widest_jitter_at_the_top_of_the_sample_range()
+    public void Adds_the_high_end_of_the_band_at_the_top_of_the_sample_range()
     {
         var calculator = new RetryAfterCalculator(Options(), BreakDuration, sampler: () => 1);
 
         var value = calculator.Compute(Rejected(TimeSpan.FromSeconds(10)), LeaseSource.Distributed);
 
-        Assert.Equal(TimeSpan.FromSeconds(12), value);
+        // sampler 1 -> jitter = hi' = 3s. 10 + 3 = 13s.
+        Assert.Equal(TimeSpan.FromSeconds(13), value);
+    }
+
+    [Fact]
+    public void Is_longer_and_more_spread_out_while_degraded()
+    {
+        var calculator = new RetryAfterCalculator(Options(), BreakDuration, sampler: () => 0);
+
+        var value = calculator.Compute(Rejected(TimeSpan.FromSeconds(10)), LeaseSource.LocalFallback);
+
+        // lo = max(20%*10, 2s) = 2s, hi = max(40%*10, 6s) = 6s; hi' = min(6, 60) = 6, lo' = min(2, 3) = 2.
+        // sampler 0 -> jitter = 2s. doubling = min(10, 60 - 6) = 10. 10 + 10 + 2 = 22s.
+        Assert.Equal(TimeSpan.FromSeconds(22), value);
+    }
+
+    [Fact]
+    public void Adds_the_widest_degraded_spread_at_the_top_of_the_sample_range()
+    {
+        var calculator = new RetryAfterCalculator(Options(), BreakDuration, sampler: () => 1);
+
+        var value = calculator.Compute(Rejected(TimeSpan.FromSeconds(10)), LeaseSource.LocalFallback);
+
+        // sampler 1 -> jitter = hi' = 6s. doubling still 10 (cap has room). 10 + 10 + 6 = 26s.
+        Assert.Equal(TimeSpan.FromSeconds(26), value);
     }
 
     [Fact]
@@ -71,7 +97,20 @@ public class RetryAfterCalculatorTests
 
         var value = calculator.Compute(Rejected(), LeaseSource.Distributed);
 
+        // b = 60s (FallbackRecoveryTime). lo = max(6, 1) = 6, hi = max(12, 3) = 12; hi' = min(12, 60) = 12, lo' = min(6, 6) = 6.
+        // sampler 0 -> jitter = 6s. 60 + 6 = 66s.
         Assert.Equal(TimeSpan.FromSeconds(66), value);
+    }
+
+    [Fact]
+    public void Adds_the_high_end_of_the_band_to_the_estimate()
+    {
+        var calculator = new RetryAfterCalculator(Options(), BreakDuration, sampler: () => 1);
+
+        var value = calculator.Compute(Rejected(), LeaseSource.Distributed);
+
+        // sampler 1 -> jitter = hi' = 12s. 60 + 12 = 72s.
+        Assert.Equal(TimeSpan.FromSeconds(72), value);
     }
 
     [Fact]
@@ -83,29 +122,200 @@ public class RetryAfterCalculatorTests
 
         var value = calculator.Compute(Rejected(), LeaseSource.FailClosed);
 
-        // BreakDuration 5s doubled (degraded) to 10s, then the degraded jitter floor of +20%.
+        // b = 5s (BreakDuration), degraded. lo = max(1, 2) = 2, hi = max(2, 6) = 6; hi' = min(6, 60) = 6, lo' = min(2, 3) = 2.
+        // sampler 0 -> jitter = 2s. doubling = min(5, 60 - 6) = 5 (room has plenty to spare). 5 + 5 + 2 = 12s.
         Assert.Equal(TimeSpan.FromSeconds(12), value);
     }
 
     [Fact]
-    public void Is_longer_and_more_spread_out_while_degraded()
+    public void Adds_the_widened_band_to_a_large_normal_base_when_the_cap_has_room_to_spare()
     {
         var calculator = new RetryAfterCalculator(Options(), BreakDuration, sampler: () => 0);
 
-        var value = calculator.Compute(Rejected(TimeSpan.FromSeconds(10)), LeaseSource.LocalFallback);
+        var value = calculator.Compute(Rejected(TimeSpan.FromMinutes(60)), LeaseSource.Distributed);
 
-        // Doubled to 20 s, then the degraded jitter floor of +20%.
-        Assert.Equal(TimeSpan.FromSeconds(24), value);
+        // b = 3600s. lo = max(360, 1) = 360, hi = max(720, 3) = 720; hi' = min(720, 60) = 60, lo' = min(360, 30) = 30.
+        // sampler 0 -> jitter = 30s. 3600 + 30 = 3630s = 60 min + 30s.
+        Assert.Equal(TimeSpan.FromSeconds(3630), value);
     }
 
     [Fact]
-    public void Never_goes_below_one_second()
+    public void Adds_at_most_the_cap_to_a_large_normal_base()
     {
-        var options = new ResilientRateLimiterOptions { FallbackRecoveryTime = TimeSpan.FromMilliseconds(100) };
+        var calculator = new RetryAfterCalculator(Options(), BreakDuration, sampler: () => 1);
+
+        var value = calculator.Compute(Rejected(TimeSpan.FromMinutes(60)), LeaseSource.Distributed);
+
+        // sampler 1 -> jitter = hi' = 60s (the whole cap). 3600 + 60 = 3660s = 60 min + 60s.
+        Assert.Equal(TimeSpan.FromSeconds(3660), value);
+    }
+
+    [Fact]
+    public void A_large_degraded_base_gets_no_doubling_once_the_band_exhausts_the_cap()
+    {
+        var calculator = new RetryAfterCalculator(Options(), BreakDuration, sampler: () => 0);
+
+        var value = calculator.Compute(Rejected(TimeSpan.FromMinutes(60)), LeaseSource.LocalFallback);
+
+        // b = 3600s degraded. lo = max(720, 2) = 720, hi = max(1440, 6) = 1440; hi' = min(1440, 60) = 60, lo' = min(720, 30) = 30.
+        // sampler 0 -> jitter = 30s. doubling = min(3600, 60 - 60) = 0: the band already spent the whole cap.
+        // 3600 + 0 + 30 = 3630s.
+        Assert.Equal(TimeSpan.FromSeconds(3630), value);
+    }
+
+    [Fact]
+    public void A_large_degraded_base_still_adds_at_most_the_cap_at_the_top_of_the_range()
+    {
+        var calculator = new RetryAfterCalculator(Options(), BreakDuration, sampler: () => 1);
+
+        var value = calculator.Compute(Rejected(TimeSpan.FromMinutes(60)), LeaseSource.LocalFallback);
+
+        // sampler 1 -> jitter = hi' = 60s, doubling still 0. 3600 + 60 = 3660s.
+        Assert.Equal(TimeSpan.FromSeconds(3660), value);
+    }
+
+    [Fact]
+    public void Adds_the_low_end_of_the_band_to_a_small_normal_base()
+    {
+        var calculator = new RetryAfterCalculator(Options(), BreakDuration, sampler: () => 0);
+
+        var value = calculator.Compute(Rejected(TimeSpan.FromSeconds(1)), LeaseSource.Distributed);
+
+        // b = 1s. lo = max(0.1, 1) = 1, hi = max(0.2, 3) = 3; hi' = min(3, 60) = 3, lo' = min(1, 1.5) = 1.
+        // sampler 0 -> jitter = 1s. 1 + 1 = 2s.
+        Assert.Equal(TimeSpan.FromSeconds(2), value);
+    }
+
+    [Fact]
+    public void Adds_the_high_end_of_the_band_to_a_small_normal_base()
+    {
+        var calculator = new RetryAfterCalculator(Options(), BreakDuration, sampler: () => 1);
+
+        var value = calculator.Compute(Rejected(TimeSpan.FromSeconds(1)), LeaseSource.Distributed);
+
+        // sampler 1 -> jitter = hi' = 3s. 1 + 3 = 4s.
+        Assert.Equal(TimeSpan.FromSeconds(4), value);
+    }
+
+    [Fact]
+    public void A_five_second_cap_leaves_no_room_for_doubling()
+    {
+        var options = Options() with { MaxAddedRetryDelay = TimeSpan.FromSeconds(5) };
+        var calculator = new RetryAfterCalculator(options, BreakDuration, sampler: () => 0);
+
+        var value = calculator.Compute(Rejected(TimeSpan.FromSeconds(10)), LeaseSource.LocalFallback);
+
+        // b = 10s degraded. lo = 2, hi = 6; hi' = min(6, 5) = 5, lo' = min(2, 2.5) = 2.
+        // sampler 0 -> jitter = 2s. doubling = min(10, 5 - 5) = 0. 10 + 0 + 2 = 12s.
+        Assert.Equal(TimeSpan.FromSeconds(12), value);
+    }
+
+    [Fact]
+    public void A_five_second_cap_still_caps_the_top_of_the_range()
+    {
+        var options = Options() with { MaxAddedRetryDelay = TimeSpan.FromSeconds(5) };
+        var calculator = new RetryAfterCalculator(options, BreakDuration, sampler: () => 1);
+
+        var value = calculator.Compute(Rejected(TimeSpan.FromSeconds(10)), LeaseSource.LocalFallback);
+
+        // sampler 1 -> jitter = hi' = 5s, doubling still 0. 10 + 5 = 15s.
+        Assert.Equal(TimeSpan.FromSeconds(15), value);
+    }
+
+    [Fact]
+    public void A_two_second_cap_shrinks_the_normal_band()
+    {
+        var options = Options() with { MaxAddedRetryDelay = TimeSpan.FromSeconds(2) };
+        var calculator = new RetryAfterCalculator(options, BreakDuration, sampler: () => 0);
+
+        var value = calculator.Compute(Rejected(TimeSpan.FromSeconds(10)), LeaseSource.Distributed);
+
+        // b = 10s normal. lo = 1, hi = 3; hi' = min(3, 2) = 2, lo' = min(1, 1) = 1.
+        // sampler 0 -> jitter = 1s. 10 + 1 = 11s.
+        Assert.Equal(TimeSpan.FromSeconds(11), value);
+    }
+
+    [Fact]
+    public void A_two_second_cap_still_caps_the_top_of_the_normal_band()
+    {
+        var options = Options() with { MaxAddedRetryDelay = TimeSpan.FromSeconds(2) };
+        var calculator = new RetryAfterCalculator(options, BreakDuration, sampler: () => 1);
+
+        var value = calculator.Compute(Rejected(TimeSpan.FromSeconds(10)), LeaseSource.Distributed);
+
+        // sampler 1 -> jitter = hi' = 2s. 10 + 2 = 12s.
+        Assert.Equal(TimeSpan.FromSeconds(12), value);
+    }
+
+    [Fact]
+    public void A_zero_cap_passes_the_inner_value_through_unchanged()
+    {
+        var options = Options() with { MaxAddedRetryDelay = TimeSpan.Zero };
+        var calculator = new RetryAfterCalculator(options, BreakDuration, sampler: () => 0);
+
+        var value = calculator.Compute(Rejected(TimeSpan.FromSeconds(10)), LeaseSource.Distributed);
+
+        Assert.Equal(TimeSpan.FromSeconds(10), value);
+    }
+
+    [Fact]
+    public void A_zero_cap_adds_nothing_even_while_degraded()
+    {
+        var options = Options() with { MaxAddedRetryDelay = TimeSpan.Zero };
+        var calculator = new RetryAfterCalculator(options, BreakDuration, sampler: () => 0);
+
+        var value = calculator.Compute(Rejected(TimeSpan.FromSeconds(10)), LeaseSource.LocalFallback);
+
+        Assert.Equal(TimeSpan.FromSeconds(10), value);
+    }
+
+    [Fact]
+    public void A_zero_cap_still_floors_to_one_second()
+    {
+        var options = new ResilientRateLimiterOptions
+        {
+            FallbackRecoveryTime = TimeSpan.FromMilliseconds(100),
+            MaxAddedRetryDelay = TimeSpan.Zero,
+        };
         var calculator = new RetryAfterCalculator(options, BreakDuration, sampler: () => 0);
 
         var value = calculator.Compute(Rejected(), LeaseSource.Distributed);
 
+        Assert.Equal(TimeSpan.FromSeconds(1), value);
+    }
+
+    [Fact]
+    public void A_zero_cap_never_calls_the_sampler()
+    {
+        var options = Options() with { MaxAddedRetryDelay = TimeSpan.Zero };
+        var calls = 0;
+        double CountingSampler()
+        {
+            calls++;
+            return 0;
+        }
+
+        var calculator = new RetryAfterCalculator(options, BreakDuration, sampler: CountingSampler);
+
+        calculator.Compute(Rejected(TimeSpan.FromSeconds(10)), LeaseSource.LocalFallback);
+
+        Assert.Equal(0, calls);
+    }
+
+    [Fact]
+    public void A_positive_cap_still_floors_to_one_second_when_the_cap_itself_is_tiny()
+    {
+        var options = new ResilientRateLimiterOptions
+        {
+            FallbackRecoveryTime = TimeSpan.FromMilliseconds(100),
+            MaxAddedRetryDelay = TimeSpan.FromMilliseconds(1),
+        };
+        var calculator = new RetryAfterCalculator(options, BreakDuration, sampler: () => 0);
+
+        var value = calculator.Compute(Rejected(), LeaseSource.Distributed);
+
+        // b = 0.1s, cap = 1ms: hi' = min(3s, 1ms) = 1ms, lo' = min(1s, 0.5ms) = 0.5ms.
+        // 0.1s + jitter(~0.5-1ms) is still well under 1s, so the final floor still applies.
         Assert.Equal(TimeSpan.FromSeconds(1), value);
     }
 
@@ -119,7 +329,36 @@ public class RetryAfterCalculatorTests
             var value = calculator.Compute(Rejected(TimeSpan.FromSeconds(10)), LeaseSource.Distributed);
 
             Assert.NotNull(value);
-            Assert.InRange(value!.Value, TimeSpan.FromSeconds(11), TimeSpan.FromSeconds(12));
+            Assert.InRange(value!.Value, TimeSpan.FromSeconds(11), TimeSpan.FromSeconds(13));
+        }
+    }
+
+    [Fact]
+    public void Never_adds_more_than_the_cap()
+    {
+        (TimeSpan b, LeaseSource source, TimeSpan cap)[] cases =
+        [
+            (TimeSpan.FromSeconds(10), LeaseSource.Distributed, TimeSpan.FromSeconds(60)),
+            (TimeSpan.FromSeconds(10), LeaseSource.LocalFallback, TimeSpan.FromSeconds(60)),
+            (TimeSpan.FromMinutes(60), LeaseSource.Distributed, TimeSpan.FromSeconds(60)),
+            (TimeSpan.FromMinutes(60), LeaseSource.LocalFallback, TimeSpan.FromSeconds(60)),
+            (TimeSpan.FromSeconds(10), LeaseSource.LocalFallback, TimeSpan.FromSeconds(5)),
+            (TimeSpan.FromSeconds(10), LeaseSource.Distributed, TimeSpan.FromSeconds(2)),
+            (TimeSpan.FromSeconds(1), LeaseSource.Distributed, TimeSpan.FromSeconds(60)),
+        ];
+
+        foreach (var (b, source, cap) in cases)
+        {
+            var options = new ResilientRateLimiterOptions { FallbackRecoveryTime = TimeSpan.FromMinutes(1), MaxAddedRetryDelay = cap };
+
+            foreach (var sampler in new Func<double>[] { () => 0, () => 1, Random.Shared.NextDouble })
+            {
+                var calculator = new RetryAfterCalculator(options, BreakDuration, sampler);
+
+                var value = calculator.Compute(b, source);
+
+                Assert.True(value!.Value - b <= cap, $"b={b} source={source} cap={cap} produced {value} (added {value - b})");
+            }
         }
     }
 
@@ -130,16 +369,20 @@ public class RetryAfterCalculatorTests
 
         var value = calculator.Compute(new ThrowingMetadataLease(), LeaseSource.Distributed);
 
-        // Falls back to the FallbackRecoveryTime estimate (60s) with the lowest jitter (+10%).
+        // Falls back to the FallbackRecoveryTime estimate (60s), same as Estimates_from_the_fallback_recovery_time...: 66s.
         Assert.Equal(TimeSpan.FromSeconds(66), value);
     }
 
     [Fact]
     public void Saturates_at_max_value_instead_of_overflowing()
     {
-        // FallbackRecoveryTime may legitimately be TimeSpan.MaxValue; doubling and jittering it
-        // must not throw OverflowException (ruling 4).
-        var options = new ResilientRateLimiterOptions { FallbackRecoveryTime = TimeSpan.MaxValue };
+        // FallbackRecoveryTime and MaxAddedRetryDelay may legitimately be TimeSpan.MaxValue; the
+        // band, the doubling and the final sums must not throw OverflowException (ruling 4).
+        var options = new ResilientRateLimiterOptions
+        {
+            FallbackRecoveryTime = TimeSpan.MaxValue,
+            MaxAddedRetryDelay = TimeSpan.MaxValue,
+        };
         var calculator = new RetryAfterCalculator(options, BreakDuration, sampler: () => 1);
 
         var value = calculator.Compute(Rejected(), LeaseSource.LocalFallback);
@@ -156,7 +399,7 @@ public class RetryAfterCalculatorTests
 
         var value = calculator.Compute((TimeSpan?)TimeSpan.FromSeconds(10), LeaseSource.Recovery);
 
-        // Recovery counts as degraded: doubled to 20s, then the degraded jitter floor of +20%.
-        Assert.Equal(TimeSpan.FromSeconds(24), value);
+        // Recovery counts as degraded: same arithmetic as Is_longer_and_more_spread_out_while_degraded: 22s.
+        Assert.Equal(TimeSpan.FromSeconds(22), value);
     }
 }
