@@ -14,9 +14,7 @@ public sealed class ResilientRateLimitLease : RateLimitLease
 
     /// <param name="inner">The lease produced by the limiter that answered.</param>
     /// <param name="source">Which path answered.</param>
-    /// <param name="retryAfter">
-    /// Used only when <paramref name="inner"/> carries no <see cref="MetadataName.RetryAfter"/> value.
-    /// </param>
+    /// <param name="retryAfter">When given, replaces <paramref name="inner"/>'s own <see cref="MetadataName.RetryAfter"/> value.</param>
     public ResilientRateLimitLease(RateLimitLease inner, LeaseSource source, TimeSpan? retryAfter = null)
     {
         ArgumentNullException.ThrowIfNull(inner);
@@ -64,19 +62,13 @@ public sealed class ResilientRateLimitLease : RateLimitLease
             return true;
         }
 
-        if (_inner.TryGetMetadata(metadataName, out metadata))
-        {
-            return true;
-        }
-
         if (metadataName == MetadataName.RetryAfter.Name && _retryAfter is { } value)
         {
             metadata = value;
             return true;
         }
 
-        metadata = null;
-        return false;
+        return _inner.TryGetMetadata(metadataName, out metadata);
     }
 
     /// <inheritdoc />

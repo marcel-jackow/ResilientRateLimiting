@@ -310,7 +310,10 @@ public class ChainedRecoveryTests
 
         Assert.False(suppressed.IsAcquired);
         Assert.True(suppressed.TryGetMetadata(MetadataName.RetryAfter.Name, out var retryAfter));
-        Assert.Equal(TimeSpan.FromSeconds(30), retryAfter);
+
+        // Recovery counts as degraded (D34): the local limiter's 30s doubles to 60s, then the
+        // degraded jitter band (20-40%) widens it to somewhere in [72s, 84s] (D32-D35).
+        Assert.InRange((TimeSpan)retryAfter!, TimeSpan.FromSeconds(72), TimeSpan.FromSeconds(84));
     }
 
     [Fact]
