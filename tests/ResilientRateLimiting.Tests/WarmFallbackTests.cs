@@ -10,16 +10,17 @@ public class WarmFallbackTests
 
     private static ResilientRateLimiterOptions Options() => new()
     {
-        ExpectedReplicaCount = 3,
         FallbackRecoveryTime = TimeSpan.FromMinutes(1),
     };
+
+    private static StoreHealthOptions StoreOptions() => new();
 
     [Fact]
     public async Task An_allowed_request_also_consumes_a_local_permit()
     {
         using var primary = new FakeRateLimiter(permitLimit: 10);
         using var fallback = new FakeRateLimiter(permitLimit: 10);
-        using var limiter = new ResilientRateLimiter(primary, fallback, Options(), new StoreHealth(Options(), _clock), _clock);
+        using var limiter = new ResilientRateLimiter(primary, fallback, Options(), new StoreHealth(StoreOptions(), _clock), _clock);
         var cancellationToken = TestContext.Current.CancellationToken;
 
         (await limiter.AcquireAsync(1, cancellationToken)).Dispose();
@@ -33,7 +34,7 @@ public class WarmFallbackTests
     {
         using var primary = new FakeRateLimiter(permitLimit: 0);
         using var fallback = new FakeRateLimiter(permitLimit: 10);
-        using var limiter = new ResilientRateLimiter(primary, fallback, Options(), new StoreHealth(Options(), _clock), _clock);
+        using var limiter = new ResilientRateLimiter(primary, fallback, Options(), new StoreHealth(StoreOptions(), _clock), _clock);
 
         using var lease = await limiter.AcquireAsync(1, TestContext.Current.CancellationToken);
 
@@ -47,7 +48,7 @@ public class WarmFallbackTests
         var options = Options();
         using var primary = new FakeRateLimiter(permitLimit: 10).FailTimes(0);
         using var fallback = new FakeRateLimiter(permitLimit: 3);
-        using var limiter = new ResilientRateLimiter(primary, fallback, options, new StoreHealth(options, _clock), _clock);
+        using var limiter = new ResilientRateLimiter(primary, fallback, options, new StoreHealth(StoreOptions(), _clock), _clock);
         var cancellationToken = TestContext.Current.CancellationToken;
 
         for (var i = 0; i < 3; i++)
@@ -66,7 +67,7 @@ public class WarmFallbackTests
     {
         using var primary = new FakeRateLimiter(permitLimit: 10);
         using var fallback = new FakeRateLimiter(permitLimit: 10);
-        using var limiter = new ResilientRateLimiter(primary, fallback, Options(), new StoreHealth(Options(), _clock), _clock);
+        using var limiter = new ResilientRateLimiter(primary, fallback, Options(), new StoreHealth(StoreOptions(), _clock), _clock);
 
         using var lease = await limiter.AcquireAsync(4, TestContext.Current.CancellationToken);
 
@@ -86,7 +87,7 @@ public class WarmFallbackTests
             QueueLimit = 0,
             AutoReplenishment = false,
         });
-        using var limiter = new ResilientRateLimiter(primary, fallback, Options(), new StoreHealth(Options(), _clock), _clock);
+        using var limiter = new ResilientRateLimiter(primary, fallback, Options(), new StoreHealth(StoreOptions(), _clock), _clock);
 
         using var lease = await limiter.AcquireAsync(50, TestContext.Current.CancellationToken);
 
@@ -100,7 +101,7 @@ public class WarmFallbackTests
     {
         using var primary = new FakeRateLimiter(permitLimit: 1000);
         using var fallback = new FakeRateLimiter(permitLimit: 10);
-        using var limiter = new ResilientRateLimiter(primary, fallback, Options(), new StoreHealth(Options(), _clock), _clock);
+        using var limiter = new ResilientRateLimiter(primary, fallback, Options(), new StoreHealth(StoreOptions(), _clock), _clock);
         var cancellationToken = TestContext.Current.CancellationToken;
 
         // A shared limit of 100 over 10 replicas is a local share of 10, and this replica takes 15.
@@ -127,7 +128,7 @@ public class WarmFallbackTests
             QueueLimit = 0,
             AutoReplenishment = false,
         });
-        using var limiter = new ResilientRateLimiter(primary, fallback, Options(), new StoreHealth(Options(), _clock), _clock);
+        using var limiter = new ResilientRateLimiter(primary, fallback, Options(), new StoreHealth(StoreOptions(), _clock), _clock);
 
         // The per-replica budget is smaller than the shared one by construction, so a request the
         // store would have granted can be above everything the fallback can ever hand out.
@@ -144,7 +145,7 @@ public class WarmFallbackTests
         using var primary = new FakeRateLimiter(permitLimit: 10);
         using var fallback = new FakeRateLimiter(permitLimit: 10)
             .ThrowsOnAttemptAcquire(new InvalidOperationException("mirror broken"));
-        using var limiter = new ResilientRateLimiter(primary, fallback, Options(), new StoreHealth(Options(), _clock), _clock);
+        using var limiter = new ResilientRateLimiter(primary, fallback, Options(), new StoreHealth(StoreOptions(), _clock), _clock);
 
         using var lease = await limiter.AcquireAsync(1, TestContext.Current.CancellationToken);
 

@@ -30,8 +30,11 @@ internal static class Replica
 {
     public static ResilientRateLimiterOptions Options() => new()
     {
-        ExpectedReplicaCount = 3,
         FallbackRecoveryTime = TimeSpan.FromMinutes(1),
+    };
+
+    public static StoreHealthOptions StoreOptions() => new()
+    {
         StoreTimeout = TimeSpan.FromSeconds(2),
     };
 
@@ -53,6 +56,6 @@ internal static class Replica
                 QueueLimit = 0,
             }),
             options: options,
-            storeHealth: new StoreHealth(options));
+            storeHealth: new StoreHealth(StoreOptions()));
     }
 }

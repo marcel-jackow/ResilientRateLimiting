@@ -11,7 +11,6 @@ public sealed class ResilientRateLimiter : RateLimiter
     private readonly LocalMirror? _mirror;
     private readonly StoreFailureBehavior _failureBehavior;
     private readonly TimeSpan _storeTimeout;
-    private readonly Func<Exception, bool>? _shouldHandle;
     private readonly TimeProvider _timeProvider;
     private readonly StoreHealth _storeHealth;
     private readonly TimeSpan _recoveryTime;
@@ -23,7 +22,7 @@ public sealed class ResilientRateLimiter : RateLimiter
 
     /// <param name="primary">The limiter backed by the shared store.</param>
     /// <param name="fallback">In-memory window or token-bucket limiter, required for <see cref="StoreFailureBehavior.LocalFallback"/>; never a <see cref="ConcurrencyLimiter"/>, which hands its permit back when the lease is disposed and so cannot hold warm state.</param>
-    /// <param name="options">Configuration, validated here so a wrong setup fails at startup.</param>
+    /// <param name="options">Configuration for this limiter, validated here so a wrong setup fails at startup. Everything shared by the store connection comes from <paramref name="storeHealth"/>.</param>
     /// <param name="storeHealth">One per store connection, shared by every limiter using that store; each limiter must be disposed, because the shared live-partition count only falls on disposal.</param>
     /// <param name="timeProvider">Defaults to <see cref="TimeProvider.System"/>.</param>
     public ResilientRateLimiter(
@@ -45,8 +44,7 @@ public sealed class ResilientRateLimiter : RateLimiter
 
         _primary = primary;
         _failureBehavior = options.FailureBehavior;
-        _storeTimeout = options.StoreTimeout;
-        _shouldHandle = options.ShouldHandle;
+        _storeTimeout = storeHealth.Options.StoreTimeout;
         _timeProvider = timeProvider ?? TimeProvider.System;
         _lastActivity = _timeProvider.GetTimestamp();
         _storeHealth = storeHealth;
@@ -59,7 +57,7 @@ public sealed class ResilientRateLimiter : RateLimiter
         _storeHealth.RegisterPartition();
     }
 
-    /// <summary>Reports no idle time while a request is in flight, or while local fallback state is still held unless the store's live partition count exceeds <see cref="ResilientRateLimiterOptions.MaxWarmPartitions"/>; otherwise reports how long ago this limiter last served a request, or was created if it has served none.</summary>
+    /// <summary>Reports no idle time while a request is in flight, or while local fallback state is still held unless the store's live partition count exceeds <see cref="StoreHealthOptions.MaxWarmPartitions"/>; otherwise reports how long ago this limiter last served a request, or was created if it has served none.</summary>
     public override TimeSpan? IdleDuration
     {
         get
@@ -122,7 +120,7 @@ public sealed class ResilientRateLimiter : RateLimiter
 
                 return new ResilientRateLimitLease(lease, LeaseSource.Distributed);
             }
-            catch (Exception exception) when (StoreFailureClassifier.IsStoreFailure(exception, _shouldHandle))
+            catch (Exception exception) when (_storeHealth.IsStoreFailure(exception))
             {
                 Interlocked.Exchange(ref _lastFallbackAt, _timeProvider.GetTimestamp());
 

@@ -9,12 +9,15 @@ public class ChainedRecoveryTests
     private static ResilientRateLimiterOptions Options(
         StoreFailureBehavior behavior = StoreFailureBehavior.LocalFallback) => new()
     {
-        ExpectedReplicaCount = 3,
         FallbackRecoveryTime = TimeSpan.FromMinutes(1),
+        FailureBehavior = behavior,
+    };
+
+    private static StoreHealthOptions StoreOptions() => new()
+    {
         FailuresBeforeOpen = 2,
         BreakDuration = TimeSpan.FromSeconds(5),
         BreakerSamplingDuration = TimeSpan.FromSeconds(10),
-        FailureBehavior = behavior,
     };
 
     private static LeaseSource SourceOf(RateLimitLease lease)
@@ -30,7 +33,7 @@ public class ChainedRecoveryTests
         var options = Options();
         using var primary = new FakeRateLimiter(permitLimit: 1000).FailTimes(2, new InvalidDataException("blip"));
         using var fallback = new FakeRateLimiter(permitLimit: 1);
-        using var limiter = new ResilientRateLimiter(primary, fallback, options, new StoreHealth(options, clock), clock);
+        using var limiter = new ResilientRateLimiter(primary, fallback, options, new StoreHealth(StoreOptions(), clock), clock);
         var cancellationToken = TestContext.Current.CancellationToken;
 
         // The outage consumes the single local permit, then the breaker opens.
@@ -58,7 +61,7 @@ public class ChainedRecoveryTests
         var options = Options();
         using var primary = new FakeRateLimiter(permitLimit: 1000).FailTimes(2, new InvalidDataException("blip"));
         using var fallback = new FakeRateLimiter(permitLimit: 1);
-        using var limiter = new ResilientRateLimiter(primary, fallback, options, new StoreHealth(options, clock), clock);
+        using var limiter = new ResilientRateLimiter(primary, fallback, options, new StoreHealth(StoreOptions(), clock), clock);
         var cancellationToken = TestContext.Current.CancellationToken;
 
         (await limiter.AcquireAsync(1, cancellationToken)).Dispose();
@@ -90,7 +93,7 @@ public class ChainedRecoveryTests
         var options = Options();
         using var primary = new FakeRateLimiter(permitLimit: 1000);
         using var fallback = new FakeRateLimiter(permitLimit: 1);
-        using var limiter = new ResilientRateLimiter(primary, fallback, options, new StoreHealth(options, clock), clock);
+        using var limiter = new ResilientRateLimiter(primary, fallback, options, new StoreHealth(StoreOptions(), clock), clock);
         var cancellationToken = TestContext.Current.CancellationToken;
 
         // More requests than the local budget: with recovery mode off, the store decides.
@@ -109,7 +112,7 @@ public class ChainedRecoveryTests
         var options = Options(StoreFailureBehavior.FailOpen);
         using var primary = new FakeRateLimiter(permitLimit: 1000).FailTimes(2, new InvalidDataException("blip"));
         using var fallback = new FakeRateLimiter(permitLimit: 0);
-        using var limiter = new ResilientRateLimiter(primary, fallback, options, new StoreHealth(options, clock), clock);
+        using var limiter = new ResilientRateLimiter(primary, fallback, options, new StoreHealth(StoreOptions(), clock), clock);
         var cancellationToken = TestContext.Current.CancellationToken;
 
         (await limiter.AcquireAsync(1, cancellationToken)).Dispose();
@@ -133,7 +136,7 @@ public class ChainedRecoveryTests
         var options = Options();
         using var primary = new FakeRateLimiter(permitLimit: 1000).FailTimes(2, new InvalidDataException("blip"));
         using var fallback = new FakeRateLimiter(permitLimit: 5);
-        using var limiter = new ResilientRateLimiter(primary, fallback, options, new StoreHealth(options, clock), clock);
+        using var limiter = new ResilientRateLimiter(primary, fallback, options, new StoreHealth(StoreOptions(), clock), clock);
         var cancellationToken = TestContext.Current.CancellationToken;
 
         // Two outage requests take one permit each; the probe takes one more by warming.
@@ -167,7 +170,7 @@ public class ChainedRecoveryTests
             QueueLimit = 0,
             AutoReplenishment = false,
         });
-        using var limiter = new ResilientRateLimiter(primary, fallback, options, new StoreHealth(options, clock), clock);
+        using var limiter = new ResilientRateLimiter(primary, fallback, options, new StoreHealth(StoreOptions(), clock), clock);
         var cancellationToken = TestContext.Current.CancellationToken;
 
         (await limiter.AcquireAsync(1, cancellationToken)).Dispose();
@@ -194,7 +197,7 @@ public class ChainedRecoveryTests
         var options = Options();
         using var primary = new FakeRateLimiter(permitLimit: 1000).FailTimes(2, new InvalidDataException("blip"));
         using var fallback = new FakeRateLimiter(permitLimit: 1);
-        using var limiter = new ResilientRateLimiter(primary, fallback, options, new StoreHealth(options, clock), clock);
+        using var limiter = new ResilientRateLimiter(primary, fallback, options, new StoreHealth(StoreOptions(), clock), clock);
         var cancellationToken = TestContext.Current.CancellationToken;
 
         (await limiter.AcquireAsync(1, cancellationToken)).Dispose();
@@ -218,7 +221,7 @@ public class ChainedRecoveryTests
         var options = Options();
         using var primary = new FakeRateLimiter(permitLimit: 1000).FailTimes(2, new InvalidDataException("blip"));
         using var fallback = new FakeRateLimiter(permitLimit: 5);
-        using var limiter = new ResilientRateLimiter(primary, fallback, options, new StoreHealth(options, clock), clock);
+        using var limiter = new ResilientRateLimiter(primary, fallback, options, new StoreHealth(StoreOptions(), clock), clock);
         var cancellationToken = TestContext.Current.CancellationToken;
 
         // Two outage requests take one permit each; the probe takes one more by warming.
@@ -244,7 +247,7 @@ public class ChainedRecoveryTests
         var options = Options();
         using var primary = new FakeRateLimiter(permitLimit: 1000).FailTimes(2, new InvalidDataException("blip"));
         using var fallback = new FakeRateLimiter(permitLimit: 5);
-        using var limiter = new ResilientRateLimiter(primary, fallback, options, new StoreHealth(options, clock), clock);
+        using var limiter = new ResilientRateLimiter(primary, fallback, options, new StoreHealth(StoreOptions(), clock), clock);
         var cancellationToken = TestContext.Current.CancellationToken;
 
         (await limiter.AcquireAsync(1, cancellationToken)).Dispose();
@@ -271,7 +274,7 @@ public class ChainedRecoveryTests
         var options = Options();
         using var primary = new FakeRateLimiter(permitLimit: 1000).FailTimes(2, new InvalidDataException("blip"));
         using var fallback = new FakeRateLimiter(permitLimit: 1);
-        using var limiter = new ResilientRateLimiter(primary, fallback, options, new StoreHealth(options, clock), clock);
+        using var limiter = new ResilientRateLimiter(primary, fallback, options, new StoreHealth(StoreOptions(), clock), clock);
         var cancellationToken = TestContext.Current.CancellationToken;
 
         (await limiter.AcquireAsync(1, cancellationToken)).Dispose();
@@ -294,7 +297,7 @@ public class ChainedRecoveryTests
         var options = Options();
         using var primary = new FakeRateLimiter(permitLimit: 1000).FailTimes(2, new InvalidDataException("blip"));
         using var fallback = new FakeRateLimiter(permitLimit: 1) { RetryAfter = TimeSpan.FromSeconds(30) };
-        using var limiter = new ResilientRateLimiter(primary, fallback, options, new StoreHealth(options, clock), clock);
+        using var limiter = new ResilientRateLimiter(primary, fallback, options, new StoreHealth(StoreOptions(), clock), clock);
         var cancellationToken = TestContext.Current.CancellationToken;
 
         (await limiter.AcquireAsync(1, cancellationToken)).Dispose();
@@ -323,7 +326,7 @@ public class ChainedRecoveryTests
             QueueLimit = 0,
             AutoReplenishment = false,
         });
-        using var limiter = new ResilientRateLimiter(primary, fallback, options, new StoreHealth(options, clock), clock);
+        using var limiter = new ResilientRateLimiter(primary, fallback, options, new StoreHealth(StoreOptions(), clock), clock);
         var cancellationToken = TestContext.Current.CancellationToken;
 
         // The outage spends two permits, the probe warms a third: seven are left for the window.

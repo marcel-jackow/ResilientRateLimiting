@@ -5,10 +5,13 @@ namespace ResilientRateLimiting.Tests;
 
 public class PartitionCapTests
 {
-    private static ResilientRateLimiterOptions Options(int maxWarmPartitions) => new()
+    private static ResilientRateLimiterOptions Options() => new()
     {
-        ExpectedReplicaCount = 3,
         FallbackRecoveryTime = TimeSpan.FromMinutes(1),
+    };
+
+    private static StoreHealthOptions StoreOptions(int maxWarmPartitions) => new()
+    {
         MaxWarmPartitions = maxWarmPartitions,
     };
 
@@ -16,8 +19,9 @@ public class PartitionCapTests
     public async Task Answers_honestly_once_the_partition_cap_is_passed()
     {
         var clock = new FakeTimeProvider();
-        var options = Options(maxWarmPartitions: 2);
-        var health = new StoreHealth(options, clock);
+        var storeOptions = StoreOptions(maxWarmPartitions: 2);
+        var options = Options();
+        var health = new StoreHealth(storeOptions, clock);
 
         var limiters = new List<ResilientRateLimiter>();
 
@@ -50,8 +54,9 @@ public class PartitionCapTests
     public async Task Releases_the_partition_when_disposed_asynchronously()
     {
         var clock = new FakeTimeProvider();
-        var options = Options(maxWarmPartitions: 1);
-        var health = new StoreHealth(options, clock);
+        var storeOptions = StoreOptions(maxWarmPartitions: 1);
+        var options = Options();
+        var health = new StoreHealth(storeOptions, clock);
 
         var primaryOne = new FakeRateLimiter(permitLimit: 10)
             .ThrowsOnIdleDuration(new InvalidOperationException("primary idle clock is unusable"));
@@ -78,8 +83,9 @@ public class PartitionCapTests
     public void Releasing_a_disposed_limiter_twice_decrements_only_once()
     {
         var clock = new FakeTimeProvider();
-        var options = Options(maxWarmPartitions: 1);
-        var health = new StoreHealth(options, clock);
+        var storeOptions = StoreOptions(maxWarmPartitions: 1);
+        var options = Options();
+        var health = new StoreHealth(storeOptions, clock);
 
         var primaryOne = new FakeRateLimiter(permitLimit: 10);
         var fallbackOne = new FakeRateLimiter(permitLimit: 10);

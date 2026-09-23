@@ -11,8 +11,11 @@ public class ResilientRateLimiterTests
     private static ResilientRateLimiterOptions Options(StoreFailureBehavior behavior = StoreFailureBehavior.LocalFallback) => new()
     {
         FailureBehavior = behavior,
-        ExpectedReplicaCount = 3,
         FallbackRecoveryTime = TimeSpan.FromMinutes(1),
+    };
+
+    private static StoreHealthOptions StoreOptions() => new()
+    {
         StoreTimeout = TimeSpan.FromMilliseconds(20),
     };
 
@@ -27,7 +30,7 @@ public class ResilientRateLimiterTests
     {
         using var primary = new FakeRateLimiter(permitLimit: 1);
         using var fallback = new FakeRateLimiter(permitLimit: 1);
-        using var limiter = new ResilientRateLimiter(primary, fallback, Options(), new StoreHealth(Options(), _clock), _clock);
+        using var limiter = new ResilientRateLimiter(primary, fallback, Options(), new StoreHealth(StoreOptions(), _clock), _clock);
 
         using var lease = await limiter.AcquireAsync(1, TestContext.Current.CancellationToken);
 
@@ -42,7 +45,7 @@ public class ResilientRateLimiterTests
     {
         using var primary = new FakeRateLimiter().AlwaysFail(new InvalidDataException("store down"));
         using var fallback = new FakeRateLimiter(permitLimit: 1);
-        using var limiter = new ResilientRateLimiter(primary, fallback, Options(), new StoreHealth(Options(), _clock), _clock);
+        using var limiter = new ResilientRateLimiter(primary, fallback, Options(), new StoreHealth(StoreOptions(), _clock), _clock);
 
         using var lease = await limiter.AcquireAsync(1, TestContext.Current.CancellationToken);
 
@@ -56,7 +59,7 @@ public class ResilientRateLimiterTests
     {
         using var primary = new FakeRateLimiter().AlwaysFail(new InvalidDataException("store down"));
         using var fallback = new FakeRateLimiter(permitLimit: 1);
-        using var limiter = new ResilientRateLimiter(primary, fallback, Options(), new StoreHealth(Options(), _clock), _clock);
+        using var limiter = new ResilientRateLimiter(primary, fallback, Options(), new StoreHealth(StoreOptions(), _clock), _clock);
 
         using var first = await limiter.AcquireAsync(1, TestContext.Current.CancellationToken);
         using var second = await limiter.AcquireAsync(1, TestContext.Current.CancellationToken);
@@ -72,7 +75,7 @@ public class ResilientRateLimiterTests
         var clock = new FakeTimeProvider();
         using var primary = new FakeRateLimiter().HangUntilReleased();
         using var fallback = new FakeRateLimiter(permitLimit: 1);
-        using var limiter = new ResilientRateLimiter(primary, fallback, Options(), new StoreHealth(Options(), clock), clock);
+        using var limiter = new ResilientRateLimiter(primary, fallback, Options(), new StoreHealth(StoreOptions(), clock), clock);
 
         var pending = limiter.AcquireAsync(1, TestContext.Current.CancellationToken).AsTask();
         Assert.False(pending.IsCompleted);
@@ -85,12 +88,46 @@ public class ResilientRateLimiterTests
     }
 
     [Fact]
+    public async Task The_cutoff_is_the_one_configured_on_the_store_connection()
+    {
+        var clock = new FakeTimeProvider();
+        var storeOptions = new StoreHealthOptions
+        {
+                StoreTimeout = TimeSpan.FromSeconds(1),
+        };
+
+        using var primary = new FakeRateLimiter().HangUntilReleased();
+        using var fallback = new FakeRateLimiter(permitLimit: 1);
+        using var limiter = new ResilientRateLimiter(primary, fallback, Options(), new StoreHealth(storeOptions, clock), clock);
+
+        var pending = limiter.AcquireAsync(1, TestContext.Current.CancellationToken).AsTask();
+
+        // Past the library's default cutoff, but well inside the one this store was given. The
+        // fallback must stay untouched throughout: a single check here would race the continuation
+        // that the cutoff schedules, and pass even when the cutoff had already fired.
+        clock.Advance(TimeSpan.FromMilliseconds(500));
+
+        var deadline = DateTime.UtcNow.AddMilliseconds(100);
+
+        while (DateTime.UtcNow < deadline)
+        {
+            Assert.Equal(0, fallback.AcquireAttempts);
+            await Task.Delay(5, TestContext.Current.CancellationToken);
+        }
+
+        clock.Advance(TimeSpan.FromMilliseconds(600));
+
+        using var lease = await pending;
+        Assert.Equal(LeaseSource.LocalFallback, SourceOf(lease));
+    }
+
+    [Fact]
     public async Task Falls_back_when_the_store_ignores_cancellation_entirely()
     {
         var clock = new FakeTimeProvider();
         using var primary = new FakeRateLimiter().HangIgnoringCancellation();
         using var fallback = new FakeRateLimiter(permitLimit: 1);
-        using var limiter = new ResilientRateLimiter(primary, fallback, Options(), new StoreHealth(Options(), clock), clock);
+        using var limiter = new ResilientRateLimiter(primary, fallback, Options(), new StoreHealth(StoreOptions(), clock), clock);
 
         var pending = limiter.AcquireAsync(1, TestContext.Current.CancellationToken).AsTask();
         Assert.False(pending.IsCompleted);
@@ -111,7 +148,7 @@ public class ResilientRateLimiterTests
         var clock = new FakeTimeProvider();
         using var primary = new FakeRateLimiter(permitLimit: 1).HangIgnoringCancellation();
         using var fallback = new FakeRateLimiter(permitLimit: 1);
-        using var limiter = new ResilientRateLimiter(primary, fallback, Options(), new StoreHealth(Options(), clock), clock);
+        using var limiter = new ResilientRateLimiter(primary, fallback, Options(), new StoreHealth(StoreOptions(), clock), clock);
 
         var pending = limiter.AcquireAsync(1, TestContext.Current.CancellationToken).AsTask();
         clock.Advance(TimeSpan.FromMilliseconds(25));
@@ -140,7 +177,7 @@ public class ResilientRateLimiterTests
     {
         using var primary = new FakeRateLimiter().HangIgnoringCancellation();
         using var fallback = new FakeRateLimiter(permitLimit: 1);
-        using var limiter = new ResilientRateLimiter(primary, fallback, Options(), new StoreHealth(Options(), _clock), _clock);
+        using var limiter = new ResilientRateLimiter(primary, fallback, Options(), new StoreHealth(StoreOptions(), _clock), _clock);
         using var caller = new CancellationTokenSource();
 
         var pending = limiter.AcquireAsync(1, caller.Token).AsTask();
@@ -157,7 +194,7 @@ public class ResilientRateLimiterTests
     {
         using var primary = new FakeRateLimiter(permitLimit: 1).HangIgnoringCancellation().TouchesTokenOnResume();
         using var fallback = new FakeRateLimiter(permitLimit: 1);
-        using var limiter = new ResilientRateLimiter(primary, fallback, Options(), new StoreHealth(Options(), _clock), _clock);
+        using var limiter = new ResilientRateLimiter(primary, fallback, Options(), new StoreHealth(StoreOptions(), _clock), _clock);
         using var caller = new CancellationTokenSource();
 
         var pending = limiter.AcquireAsync(1, caller.Token).AsTask();
@@ -181,7 +218,7 @@ public class ResilientRateLimiterTests
     public async Task Admits_the_request_when_configured_to_fail_open()
     {
         using var primary = new FakeRateLimiter().AlwaysFail(new InvalidDataException("store down"));
-        using var limiter = new ResilientRateLimiter(primary, fallback: null, Options(StoreFailureBehavior.FailOpen), new StoreHealth(Options(StoreFailureBehavior.FailOpen), _clock), _clock);
+        using var limiter = new ResilientRateLimiter(primary, fallback: null, Options(StoreFailureBehavior.FailOpen), new StoreHealth(StoreOptions(), _clock), _clock);
 
         using var lease = await limiter.AcquireAsync(1, TestContext.Current.CancellationToken);
 
@@ -196,7 +233,7 @@ public class ResilientRateLimiterTests
             .ThrowsOnIdleDuration(new InvalidOperationException("primary idle clock is unusable"));
         using var fallback = new FakeRateLimiter(permitLimit: 10);
         using var limiter = new ResilientRateLimiter(
-            primary, fallback, Options(StoreFailureBehavior.FailOpen), new StoreHealth(Options(StoreFailureBehavior.FailOpen), _clock), _clock);
+            primary, fallback, Options(StoreFailureBehavior.FailOpen), new StoreHealth(StoreOptions(), _clock), _clock);
 
         using var lease = await limiter.AcquireAsync(1, TestContext.Current.CancellationToken);
 
@@ -209,7 +246,7 @@ public class ResilientRateLimiterTests
     public async Task Rejects_the_request_when_configured_to_fail_closed()
     {
         using var primary = new FakeRateLimiter().AlwaysFail(new InvalidDataException("store down"));
-        using var limiter = new ResilientRateLimiter(primary, fallback: null, Options(StoreFailureBehavior.FailClosed), new StoreHealth(Options(StoreFailureBehavior.FailClosed), _clock), _clock);
+        using var limiter = new ResilientRateLimiter(primary, fallback: null, Options(StoreFailureBehavior.FailClosed), new StoreHealth(StoreOptions(), _clock), _clock);
 
         using var lease = await limiter.AcquireAsync(1, TestContext.Current.CancellationToken);
 
@@ -222,7 +259,7 @@ public class ResilientRateLimiterTests
     {
         using var primary = new FakeRateLimiter().HangUntilReleased();
         using var fallback = new FakeRateLimiter(permitLimit: 1);
-        using var limiter = new ResilientRateLimiter(primary, fallback, Options(), new StoreHealth(Options(), _clock), _clock);
+        using var limiter = new ResilientRateLimiter(primary, fallback, Options(), new StoreHealth(StoreOptions(), _clock), _clock);
         using var cts = new CancellationTokenSource();
 
         var pending = limiter.AcquireAsync(1, cts.Token).AsTask();
@@ -237,7 +274,7 @@ public class ResilientRateLimiterTests
     {
         using var primary = new FakeRateLimiter().AlwaysFail(new ObjectDisposedException("multiplexer"));
         using var fallback = new FakeRateLimiter(permitLimit: 1);
-        using var limiter = new ResilientRateLimiter(primary, fallback, Options(), new StoreHealth(Options(), _clock), _clock);
+        using var limiter = new ResilientRateLimiter(primary, fallback, Options(), new StoreHealth(StoreOptions(), _clock), _clock);
 
         await Assert.ThrowsAsync<ObjectDisposedException>(async () => await limiter.AcquireAsync(1, TestContext.Current.CancellationToken));
         Assert.Equal(0, fallback.AcquireAttempts);
@@ -248,7 +285,7 @@ public class ResilientRateLimiterTests
     {
         using var primary = new FakeRateLimiter().AlwaysFail(new InvalidDataException("store down"));
         using var fallback = new FakeRateLimiter().AlwaysFail(new InvalidDataException("fallback broken"));
-        using var limiter = new ResilientRateLimiter(primary, fallback, Options(), new StoreHealth(Options(), _clock), _clock);
+        using var limiter = new ResilientRateLimiter(primary, fallback, Options(), new StoreHealth(StoreOptions(), _clock), _clock);
 
         await Assert.ThrowsAsync<InvalidDataException>(async () => await limiter.AcquireAsync(1, TestContext.Current.CancellationToken));
     }
@@ -258,7 +295,7 @@ public class ResilientRateLimiterTests
     {
         using var primary = new FakeRateLimiter().AlwaysFail(new InvalidDataException("store down"));
         using var fallback = new FakeRateLimiter(permitLimit: 10);
-        using var limiter = new ResilientRateLimiter(primary, fallback, Options(), new StoreHealth(Options(), _clock), _clock);
+        using var limiter = new ResilientRateLimiter(primary, fallback, Options(), new StoreHealth(StoreOptions(), _clock), _clock);
 
         using var lease = await limiter.AcquireAsync(4, TestContext.Current.CancellationToken);
 
@@ -271,7 +308,7 @@ public class ResilientRateLimiterTests
     {
         using var primary = new FakeRateLimiter(permitLimit: 10);
         using var fallback = new FakeRateLimiter(permitLimit: 10);
-        using var limiter = new ResilientRateLimiter(primary, fallback, Options(), new StoreHealth(Options(), _clock), _clock);
+        using var limiter = new ResilientRateLimiter(primary, fallback, Options(), new StoreHealth(StoreOptions(), _clock), _clock);
 
         using var lease = limiter.AttemptAcquire(1);
 
@@ -282,32 +319,23 @@ public class ResilientRateLimiterTests
     }
 
     [Fact]
-    public async Task Ignores_a_failure_behavior_mutated_after_construction()
+    public async Task Store_failure_classification_comes_from_the_store_not_from_each_limiter()
     {
-        var options = Options(StoreFailureBehavior.FailOpen);
-        using var primary = new FakeRateLimiter().AlwaysFail(new InvalidDataException("store down"));
-        using var limiter = new ResilientRateLimiter(primary, fallback: null, options, new StoreHealth(options, _clock), _clock);
+        var storeOptions = new StoreHealthOptions
+        {
+                ShouldHandle = exception => exception is InvalidOperationException,
+        };
 
-        options.FailureBehavior = StoreFailureBehavior.LocalFallback;
+        using var primary = new FakeRateLimiter().AlwaysFail(new InvalidOperationException("the store refused"));
+        using var fallback = new FakeRateLimiter(permitLimit: 1);
+        using var limiter = new ResilientRateLimiter(primary, fallback, Options(), new StoreHealth(storeOptions, _clock), _clock);
 
+        // The store connection decides what counts as a store failure. A limiter built from options
+        // that say nothing about it must not reach a different verdict on the same exception.
         using var lease = await limiter.AcquireAsync(1, TestContext.Current.CancellationToken);
 
         Assert.True(lease.IsAcquired);
-        Assert.Equal(LeaseSource.FailOpen, SourceOf(lease));
-    }
-
-    [Fact]
-    public async Task Ignores_a_should_handle_predicate_mutated_after_construction()
-    {
-        var options = Options(StoreFailureBehavior.FailOpen);
-        options.ShouldHandle = _ => false;
-        using var primary = new FakeRateLimiter().AlwaysFail(new InvalidDataException("store down"));
-        using var limiter = new ResilientRateLimiter(primary, fallback: null, options, new StoreHealth(options, _clock), _clock);
-
-        options.ShouldHandle = _ => true;
-
-        await Assert.ThrowsAsync<InvalidDataException>(
-            async () => await limiter.AcquireAsync(1, TestContext.Current.CancellationToken));
+        Assert.Equal(LeaseSource.LocalFallback, SourceOf(lease));
     }
 
     [Fact]
@@ -315,7 +343,7 @@ public class ResilientRateLimiterTests
     {
         using var primary = new FakeRateLimiter();
         using var fallback = new FakeRateLimiter();
-        using var limiter = new ResilientRateLimiter(primary, fallback, Options(), new StoreHealth(Options(), _clock), _clock);
+        using var limiter = new ResilientRateLimiter(primary, fallback, Options(), new StoreHealth(StoreOptions(), _clock), _clock);
 
         Assert.Null(limiter.GetStatistics());
     }
@@ -325,7 +353,7 @@ public class ResilientRateLimiterTests
     {
         var primary = new FakeRateLimiter(permitLimit: 1);
         var fallback = new FakeRateLimiter(permitLimit: 1);
-        var limiter = new ResilientRateLimiter(primary, fallback, Options(), new StoreHealth(Options(), _clock), _clock);
+        var limiter = new ResilientRateLimiter(primary, fallback, Options(), new StoreHealth(StoreOptions(), _clock), _clock);
 
         limiter.Dispose();
 
@@ -338,7 +366,7 @@ public class ResilientRateLimiterTests
     {
         var primary = new FakeRateLimiter(permitLimit: 1);
         var fallback = new FakeRateLimiter(permitLimit: 1);
-        var limiter = new ResilientRateLimiter(primary, fallback, Options(), new StoreHealth(Options(), _clock), _clock);
+        var limiter = new ResilientRateLimiter(primary, fallback, Options(), new StoreHealth(StoreOptions(), _clock), _clock);
 
         await limiter.DisposeAsync();
 
@@ -352,7 +380,7 @@ public class ResilientRateLimiterTests
         var options = Options(StoreFailureBehavior.FailOpen);
         var primary = new FakeRateLimiter(permitLimit: 1);
         var fallback = new FakeRateLimiter(permitLimit: 1);
-        var limiter = new ResilientRateLimiter(primary, fallback, options, new StoreHealth(options, _clock), _clock);
+        var limiter = new ResilientRateLimiter(primary, fallback, options, new StoreHealth(StoreOptions(), _clock), _clock);
 
         limiter.Dispose();
 
@@ -365,7 +393,7 @@ public class ResilientRateLimiterTests
         var options = Options(StoreFailureBehavior.FailClosed);
         var primary = new FakeRateLimiter(permitLimit: 1);
         var fallback = new FakeRateLimiter(permitLimit: 1);
-        var limiter = new ResilientRateLimiter(primary, fallback, options, new StoreHealth(options, _clock), _clock);
+        var limiter = new ResilientRateLimiter(primary, fallback, options, new StoreHealth(StoreOptions(), _clock), _clock);
 
         await limiter.DisposeAsync();
 
@@ -378,7 +406,7 @@ public class ResilientRateLimiterTests
         using var primary = new FakeRateLimiter();
 
         Assert.Throws<ArgumentNullException>(() =>
-            new ResilientRateLimiter(primary, fallback: null, Options(), new StoreHealth(Options(), _clock), _clock));
+            new ResilientRateLimiter(primary, fallback: null, Options(), new StoreHealth(StoreOptions(), _clock), _clock));
     }
 
     [Fact]
@@ -389,7 +417,7 @@ public class ResilientRateLimiterTests
             new ConcurrencyLimiterOptions { PermitLimit = 5, QueueLimit = 0 });
 
         var error = Assert.Throws<ArgumentException>(() =>
-            new ResilientRateLimiter(primary, fallback, Options(), new StoreHealth(Options(), _clock), _clock));
+            new ResilientRateLimiter(primary, fallback, Options(), new StoreHealth(StoreOptions(), _clock), _clock));
 
         Assert.Equal("fallback", error.ParamName);
     }
@@ -413,6 +441,6 @@ public class ResilientRateLimiterTests
         using var fallback = new FakeRateLimiter();
 
         Assert.Throws<InvalidOperationException>(() =>
-            new ResilientRateLimiter(primary, fallback, new ResilientRateLimiterOptions(), new StoreHealth(Options(), _clock), _clock));
+            new ResilientRateLimiter(primary, fallback, new ResilientRateLimiterOptions(), new StoreHealth(StoreOptions(), _clock), _clock));
     }
 }

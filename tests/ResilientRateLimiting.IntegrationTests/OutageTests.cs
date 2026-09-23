@@ -18,7 +18,8 @@ public class OutageTests : IAsyncLifetime
     public async Task A_store_that_dies_under_a_live_limiter_degrades_instead_of_throwing()
     {
         const int RequestsDuringOutage = 20;
-        const int LocalBudget = 10;
+        const int SharedLimit = 30;
+        const int Replicas = 3;
         const int HealthyRequestsBeforeOutage = 1;
         var partitionKey = $"outage-{Guid.NewGuid():N}";
         var cancellationToken = TestContext.Current.CancellationToken;
@@ -27,8 +28,11 @@ public class OutageTests : IAsyncLifetime
 
         var options = new ResilientRateLimiterOptions
         {
-            ExpectedReplicaCount = 3,
             FallbackRecoveryTime = TimeSpan.FromMinutes(1),
+        };
+
+        var storeOptions = new StoreHealthOptions
+        {
             StoreTimeout = TimeSpan.FromMilliseconds(200),
             FailuresBeforeOpen = 2,
             BreakDuration = TimeSpan.FromSeconds(5),
@@ -38,18 +42,19 @@ public class OutageTests : IAsyncLifetime
         using var limiter = new ResilientRateLimiter(
             primary: new RedisSlidingWindowRateLimiter<string>(partitionKey, new RedisSlidingWindowRateLimiterOptions
             {
-                PermitLimit = 30,
+                PermitLimit = SharedLimit,
                 Window = TimeSpan.FromMinutes(1),
                 ConnectionMultiplexerFactory = () => connection,
             }),
             fallback: new FixedWindowRateLimiter(new FixedWindowRateLimiterOptions
             {
-                PermitLimit = LocalBudget,
+                // The shared limit is written once; the per-replica budget follows from it.
+                PermitLimit = LocalBudget.ForReplicas(SharedLimit, Replicas),
                 Window = TimeSpan.FromMinutes(1),
                 QueueLimit = 0,
             }),
             options: options,
-            storeHealth: new StoreHealth(options));
+            storeHealth: new StoreHealth(storeOptions));
 
         using (var healthy = await limiter.AcquireAsync(1, cancellationToken))
         {
@@ -85,7 +90,7 @@ public class OutageTests : IAsyncLifetime
         Assert.Equal(RequestsDuringOutage, degraded);
 
         // And protection did not disappear: the local budget still bounded what got through.
-        Assert.Equal(LocalBudget - HealthyRequestsBeforeOutage, admitted);
+        Assert.Equal(LocalBudget.ForReplicas(SharedLimit, Replicas) - HealthyRequestsBeforeOutage, admitted);
 
         await connection.DisposeAsync();
     }

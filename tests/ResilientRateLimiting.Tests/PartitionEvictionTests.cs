@@ -15,7 +15,6 @@ public class PartitionEvictionTests
         var clock = new FakeTimeProvider();
         var options = new ResilientRateLimiterOptions
         {
-            ExpectedReplicaCount = 3,
             FallbackRecoveryTime = TimeSpan.FromSeconds(1),
             MaxWarmRetention = TimeSpan.FromSeconds(1),
         };
@@ -24,7 +23,7 @@ public class PartitionEvictionTests
         using var fallback = new FakeRateLimiter(permitLimit: 10);
 
         using var partitioned = PartitionedRateLimiter.Create<string, string>(
-            _ => RateLimitPartition.Get("only", _ => new ResilientRateLimiter(primary, fallback, options, new StoreHealth(options, clock), clock)));
+            _ => RateLimitPartition.Get("only", _ => new ResilientRateLimiter(primary, fallback, options, new StoreHealth(new StoreHealthOptions(), clock), clock)));
 
         (await partitioned.AcquireAsync("resource", 1, TestContext.Current.CancellationToken)).Dispose();
 
