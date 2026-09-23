@@ -9,7 +9,9 @@ namespace ResilientRateLimiting;
 public sealed class StoreHealth
 {
     private readonly ResiliencePipeline<RateLimitLease> _pipeline;
-    private readonly ConcurrentDictionary<Type, byte> _reportedFailureTypes = new();
+    private readonly TimeProvider _timeProvider;
+    private readonly ConcurrentDictionary<Type, long> _lastSeen = new();
+    private long _lastClosedAt = long.MinValue;
     private int _livePartitions;
     private bool _reached;
 
@@ -21,8 +23,9 @@ public sealed class StoreHealth
         options.Validate();
 
         Options = options;
+        _timeProvider = timeProvider ?? TimeProvider.System;
 
-        _pipeline = new ResiliencePipelineBuilder<RateLimitLease> { TimeProvider = timeProvider ?? TimeProvider.System }
+        _pipeline = new ResiliencePipelineBuilder<RateLimitLease> { TimeProvider = _timeProvider }
             .AddCircuitBreaker(new CircuitBreakerStrategyOptions<RateLimitLease>
             {
                 ShouldHandle = args => new ValueTask<bool>(IsStoreFailure(args.Outcome.Exception)),
@@ -32,7 +35,7 @@ public sealed class StoreHealth
                 BreakDuration = options.BreakDuration,
                 OnClosed = args =>
                 {
-                    ForgetReportedFailureTypes();
+                    Interlocked.Exchange(ref _lastClosedAt, _timeProvider.GetTimestamp());
                     return default;
                 },
             })
@@ -59,10 +62,10 @@ public sealed class StoreHealth
 
     internal void ReleasePartition() => Interlocked.Decrement(ref _livePartitions);
 
-    /// <summary>Invokes <see cref="StoreHealthOptions.OnStoreFailure"/> the first time this instance sees this exception's type. Never throws: the callback is caller code, and a handled store failure must not become an unhandled one.</summary>
+    /// <summary>Invokes <see cref="StoreHealthOptions.OnStoreFailure"/> for the first failure of this exception type, and again once quiet or closed. Never throws: the callback is caller code, and a handled store failure must not become an unhandled one.</summary>
     internal void ReportFirstOccurrence(Exception exception)
     {
-        if (Options.OnStoreFailure is not { } callback || !_reportedFailureTypes.TryAdd(exception.GetType(), 0))
+        if (Options.OnStoreFailure is not { } callback || !ShouldReport(exception.GetType(), _timeProvider.GetTimestamp()))
         {
             return;
         }
@@ -77,16 +80,29 @@ public sealed class StoreHealth
         }
     }
 
-    /// <summary>Clears the reported-types memory so the next outage reports each type again. Called from Polly's OnClosed on the half-open-to-closed transition, i.e. once per outage, not on every successful store call.</summary>
-    private void ForgetReportedFailureTypes()
+    // CAS loop: the winner of TryAdd (first sighting) always reports; otherwise decide from the
+    // previous lastSeen before publishing the new one, retrying if another thread raced us.
+    private bool ShouldReport(Type type, long now)
     {
-        try
+        while (true)
         {
-            _reportedFailureTypes.Clear();
-        }
-        catch
-        {
-            // Never let a Polly transition callback throw.
+            if (_lastSeen.TryAdd(type, now))
+            {
+                return true;
+            }
+
+            if (!_lastSeen.TryGetValue(type, out var lastSeen))
+            {
+                continue;
+            }
+
+            var report = lastSeen < Volatile.Read(ref _lastClosedAt)
+                || _timeProvider.GetElapsedTime(lastSeen, now) >= Options.BreakerSamplingDuration;
+
+            if (_lastSeen.TryUpdate(type, now, lastSeen))
+            {
+                return report;
+            }
         }
     }
 }

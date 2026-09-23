@@ -30,7 +30,7 @@ public sealed record StoreHealthOptions
     /// <summary>Overrides classification. True treats the exception as a store failure.</summary>
     public Func<Exception, bool>? ShouldHandle { get; init; }
 
-    /// <summary>Raised once per distinct exception type per outage when a store call fails on any limiter sharing this connection.</summary>
+    /// <summary>Raised for the first failure of each exception type, and again once that type has been quiet for <see cref="BreakerSamplingDuration"/> or the breaker has closed since it last failed.</summary>
     public Action<Exception>? OnStoreFailure { get; init; }
 
     /// <summary>Throws when the configuration is incomplete or contradictory. Reports every violated rule, not just the first.</summary>
