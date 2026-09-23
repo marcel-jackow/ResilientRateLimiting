@@ -13,7 +13,7 @@ public class IdleDurationTests
         MaxWarmRetention = TimeSpan.FromMinutes(2),
     };
 
-    private static StoreHealthOptions StoreOptions() => new() { ExpectedReplicaCount = 3 };
+    private static StoreHealthOptions StoreOptions() => new();
 
     [Fact]
     public void Reports_its_own_time_since_construction_before_any_request_is_served()
@@ -170,8 +170,7 @@ public class IdleDurationTests
         var health = new StoreHealth(
             new StoreHealthOptions
             {
-                ExpectedReplicaCount = 3,
-                FailuresBeforeOpen = 2,
+                        FailuresBeforeOpen = 2,
                 BreakDuration = TimeSpan.FromMinutes(10),
                 MaxWarmPartitions = 1,
             },

@@ -15,7 +15,6 @@ public class ChainedRecoveryTests
 
     private static StoreHealthOptions StoreOptions() => new()
     {
-        ExpectedReplicaCount = 3,
         FailuresBeforeOpen = 2,
         BreakDuration = TimeSpan.FromSeconds(5),
         BreakerSamplingDuration = TimeSpan.FromSeconds(10),

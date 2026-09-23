@@ -27,24 +27,8 @@ public sealed class StoreHealthOptions
     /// <summary>Scales the local budget until some limiter on this store first reaches it. 1.0 means no effect.</summary>
     public double ColdStartFallbackFactor { get; init; } = 1.0;
 
-    /// <summary>Replicas normally running. Read only by <see cref="LocalPermitLimit"/>, which sizes the fallback limiter the caller supplies.</summary>
-    public int ExpectedReplicaCount { get; init; }
-
     /// <summary>Overrides classification. True treats the exception as a store failure.</summary>
     public Func<Exception, bool>? ShouldHandle { get; init; }
-
-    /// <summary>The per-replica budget for a shared limit of <paramref name="sharedPermitLimit"/>.</summary>
-    /// <exception cref="InvalidOperationException"><see cref="ExpectedReplicaCount"/> is not set.</exception>
-    public int LocalPermitLimit(int sharedPermitLimit)
-    {
-        if (ExpectedReplicaCount < 1)
-        {
-            throw new InvalidOperationException(
-                $"{nameof(ExpectedReplicaCount)} must be set before asking for a local permit limit.");
-        }
-
-        return (int)Math.Ceiling(sharedPermitLimit / (double)ExpectedReplicaCount);
-    }
 
     /// <summary>Throws when the configuration is incomplete or contradictory.</summary>
     /// <exception cref="InvalidOperationException">The configuration cannot be used.</exception>

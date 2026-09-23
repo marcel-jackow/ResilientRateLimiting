@@ -13,7 +13,7 @@ public class WarmFallbackTests
         FallbackRecoveryTime = TimeSpan.FromMinutes(1),
     };
 
-    private static StoreHealthOptions StoreOptions() => new() { ExpectedReplicaCount = 3 };
+    private static StoreHealthOptions StoreOptions() => new();
 
     [Fact]
     public async Task An_allowed_request_also_consumes_a_local_permit()

@@ -15,7 +15,6 @@ public class ColdStartTests
 
     private static StoreHealthOptions StoreOptions(double factor) => new()
     {
-        ExpectedReplicaCount = 3,
         ColdStartFallbackFactor = factor,
     };
 

@@ -13,7 +13,6 @@ public class StoreHealthTests
 
     private static StoreHealthOptions StoreOptions() => new()
     {
-        ExpectedReplicaCount = 3,
         FailuresBeforeOpen = 2,
         BreakerSamplingDuration = TimeSpan.FromSeconds(10),
         BreakDuration = TimeSpan.FromSeconds(5),
@@ -32,8 +31,7 @@ public class StoreHealthTests
         var health = new StoreHealth(
             new StoreHealthOptions
             {
-                ExpectedReplicaCount = 3,
-                FailuresBeforeOpen = 2,
+                        FailuresBeforeOpen = 2,
                 BreakerSamplingDuration = TimeSpan.FromSeconds(10),
                 BreakDuration = TimeSpan.FromSeconds(5),
                 ShouldHandle = _ => false,
@@ -166,8 +164,7 @@ public class StoreHealthTests
         var options = Options();
         var storeOptions = new StoreHealthOptions
         {
-            ExpectedReplicaCount = 3,
-            FailuresBeforeOpen = 2,
+                FailuresBeforeOpen = 2,
             BreakerSamplingDuration = TimeSpan.FromSeconds(10),
             BreakDuration = TimeSpan.FromSeconds(5),
             FailureRatio = 0.5,

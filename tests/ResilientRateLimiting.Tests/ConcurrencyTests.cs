@@ -15,7 +15,7 @@ public class ConcurrencyTests
         FallbackRecoveryTime = TimeSpan.FromMinutes(1),
     };
 
-    private static StoreHealthOptions StoreOptions() => new() { ExpectedReplicaCount = 3 };
+    private static StoreHealthOptions StoreOptions() => new();
 
     private static FixedWindowRateLimiter LocalCounter(int permitLimit) =>
         new(new FixedWindowRateLimiterOptions

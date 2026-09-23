@@ -19,6 +19,7 @@ public class OutageTests : IAsyncLifetime
     {
         const int RequestsDuringOutage = 20;
         const int SharedLimit = 30;
+        const int Replicas = 3;
         const int HealthyRequestsBeforeOutage = 1;
         var partitionKey = $"outage-{Guid.NewGuid():N}";
         var cancellationToken = TestContext.Current.CancellationToken;
@@ -32,7 +33,6 @@ public class OutageTests : IAsyncLifetime
 
         var storeOptions = new StoreHealthOptions
         {
-            ExpectedReplicaCount = 3,
             StoreTimeout = TimeSpan.FromMilliseconds(200),
             FailuresBeforeOpen = 2,
             BreakDuration = TimeSpan.FromSeconds(5),
@@ -49,7 +49,7 @@ public class OutageTests : IAsyncLifetime
             fallback: new FixedWindowRateLimiter(new FixedWindowRateLimiterOptions
             {
                 // The shared limit is written once; the per-replica budget follows from it.
-                PermitLimit = storeOptions.LocalPermitLimit(SharedLimit),
+                PermitLimit = LocalBudget.ForReplicas(SharedLimit, Replicas),
                 Window = TimeSpan.FromMinutes(1),
                 QueueLimit = 0,
             }),
@@ -90,7 +90,7 @@ public class OutageTests : IAsyncLifetime
         Assert.Equal(RequestsDuringOutage, degraded);
 
         // And protection did not disappear: the local budget still bounded what got through.
-        Assert.Equal(storeOptions.LocalPermitLimit(SharedLimit) - HealthyRequestsBeforeOutage, admitted);
+        Assert.Equal(LocalBudget.ForReplicas(SharedLimit, Replicas) - HealthyRequestsBeforeOutage, admitted);
 
         await connection.DisposeAsync();
     }

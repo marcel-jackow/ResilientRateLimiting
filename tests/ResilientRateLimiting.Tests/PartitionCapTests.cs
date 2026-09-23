@@ -12,7 +12,6 @@ public class PartitionCapTests
 
     private static StoreHealthOptions StoreOptions(int maxWarmPartitions) => new()
     {
-        ExpectedReplicaCount = 3,
         MaxWarmPartitions = maxWarmPartitions,
     };
 

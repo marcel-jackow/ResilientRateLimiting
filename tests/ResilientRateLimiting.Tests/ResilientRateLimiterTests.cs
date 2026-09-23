@@ -16,7 +16,6 @@ public class ResilientRateLimiterTests
 
     private static StoreHealthOptions StoreOptions() => new()
     {
-        ExpectedReplicaCount = 3,
         StoreTimeout = TimeSpan.FromMilliseconds(20),
     };
 
@@ -94,8 +93,7 @@ public class ResilientRateLimiterTests
         var clock = new FakeTimeProvider();
         var storeOptions = new StoreHealthOptions
         {
-            ExpectedReplicaCount = 3,
-            StoreTimeout = TimeSpan.FromSeconds(1),
+                StoreTimeout = TimeSpan.FromSeconds(1),
         };
 
         using var primary = new FakeRateLimiter().HangUntilReleased();
@@ -325,8 +323,7 @@ public class ResilientRateLimiterTests
     {
         var storeOptions = new StoreHealthOptions
         {
-            ExpectedReplicaCount = 3,
-            ShouldHandle = exception => exception is InvalidOperationException,
+                ShouldHandle = exception => exception is InvalidOperationException,
         };
 
         using var primary = new FakeRateLimiter().AlwaysFail(new InvalidOperationException("the store refused"));

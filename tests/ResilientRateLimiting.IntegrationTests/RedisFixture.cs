@@ -35,7 +35,6 @@ internal static class Replica
 
     public static StoreHealthOptions StoreOptions() => new()
     {
-        ExpectedReplicaCount = 3,
         StoreTimeout = TimeSpan.FromSeconds(2),
     };
 
