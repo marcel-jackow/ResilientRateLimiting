@@ -21,26 +21,28 @@ public sealed record ResilientRateLimiterOptions
     /// <summary>Low-cardinality metric tag identifying this policy.</summary>
     public string PolicyName { get; init; } = "default";
 
-    /// <summary>Throws when the configuration is incomplete or contradictory.</summary>
-    /// <exception cref="InvalidOperationException">The configuration cannot be used.</exception>
+    /// <summary>Throws when the configuration is incomplete or contradictory. Reports every violated rule, not just the first.</summary>
+    /// <exception cref="InvalidOperationException">The configuration cannot be used. The message lists every violated rule, one per line.</exception>
     public void Validate()
     {
+        List<string>? errors = null;
+
         if (MaxWarmRetention <= TimeSpan.Zero)
         {
-            throw new InvalidOperationException($"{nameof(MaxWarmRetention)} must be greater than zero.");
+            (errors ??= []).Add($"{nameof(MaxWarmRetention)} must be greater than zero.");
         }
 
-        if (FailureBehavior != StoreFailureBehavior.LocalFallback)
+        if (FailureBehavior == StoreFailureBehavior.LocalFallback && FallbackRecoveryTime <= TimeSpan.Zero)
         {
-            return;
-        }
-
-        if (FallbackRecoveryTime <= TimeSpan.Zero)
-        {
-            throw new InvalidOperationException(
+            (errors ??= []).Add(
                 $"{nameof(FallbackRecoveryTime)} must be set when {nameof(FailureBehavior)} is " +
                 $"{nameof(StoreFailureBehavior.LocalFallback)}. A RateLimiter cannot be asked how long " +
                 "it takes to refill.");
+        }
+
+        if (errors is not null)
+        {
+            throw new InvalidOperationException(string.Join(Environment.NewLine, errors));
         }
     }
 }

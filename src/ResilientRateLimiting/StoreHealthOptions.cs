@@ -1,7 +1,7 @@
 namespace ResilientRateLimiting;
 
 /// <summary>Configuration for one store connection, shared by every limiter that uses it.</summary>
-public sealed class StoreHealthOptions
+public sealed record StoreHealthOptions
 {
     /// <summary>Polly refuses a sampling duration below this.</summary>
     internal static readonly TimeSpan MinimumSamplingDuration = TimeSpan.FromMilliseconds(500);
@@ -33,48 +33,53 @@ public sealed class StoreHealthOptions
     /// <summary>Raised once per distinct exception type when a store call fails on any limiter sharing this connection.</summary>
     public Action<Exception>? OnStoreFailure { get; init; }
 
-    /// <summary>Throws when the configuration is incomplete or contradictory.</summary>
-    /// <exception cref="InvalidOperationException">The configuration cannot be used.</exception>
+    /// <summary>Throws when the configuration is incomplete or contradictory. Reports every violated rule, not just the first.</summary>
+    /// <exception cref="InvalidOperationException">The configuration cannot be used. The message lists every violated rule, one per line.</exception>
     public void Validate()
     {
+        List<string>? errors = null;
+
         if (StoreTimeout <= TimeSpan.Zero)
         {
-            throw new InvalidOperationException($"{nameof(StoreTimeout)} must be greater than zero.");
+            (errors ??= []).Add($"{nameof(StoreTimeout)} must be greater than zero.");
         }
 
         if (FailuresBeforeOpen < 2)
         {
-            throw new InvalidOperationException(
+            (errors ??= []).Add(
                 $"{nameof(FailuresBeforeOpen)} must be at least 2. The underlying breaker cannot open " +
                 "on a single failure.");
         }
 
         if (FailureRatio is <= 0 or > 1)
         {
-            throw new InvalidOperationException(
-                $"{nameof(FailureRatio)} must be greater than 0 and at most 1.");
+            (errors ??= []).Add($"{nameof(FailureRatio)} must be greater than 0 and at most 1.");
         }
 
         if (BreakDuration <= TimeSpan.Zero)
         {
-            throw new InvalidOperationException($"{nameof(BreakDuration)} must be greater than zero.");
+            (errors ??= []).Add($"{nameof(BreakDuration)} must be greater than zero.");
         }
 
         if (BreakerSamplingDuration < MinimumSamplingDuration)
         {
-            throw new InvalidOperationException(
+            (errors ??= []).Add(
                 $"{nameof(BreakerSamplingDuration)} must be at least {MinimumSamplingDuration.TotalMilliseconds} ms.");
         }
 
         if (ColdStartFallbackFactor is <= 0 or > 1)
         {
-            throw new InvalidOperationException(
-                $"{nameof(ColdStartFallbackFactor)} must be greater than 0 and at most 1.");
+            (errors ??= []).Add($"{nameof(ColdStartFallbackFactor)} must be greater than 0 and at most 1.");
         }
 
         if (MaxWarmPartitions < 1)
         {
-            throw new InvalidOperationException($"{nameof(MaxWarmPartitions)} must be at least 1.");
+            (errors ??= []).Add($"{nameof(MaxWarmPartitions)} must be at least 1.");
+        }
+
+        if (errors is not null)
+        {
+            throw new InvalidOperationException(string.Join(Environment.NewLine, errors));
         }
     }
 }

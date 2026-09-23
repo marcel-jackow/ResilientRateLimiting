@@ -83,4 +83,14 @@ public class StoreHealthOptionsTests
         var error = Assert.Throws<InvalidOperationException>(options.Validate);
         Assert.Contains(nameof(StoreHealthOptions.FailureRatio), error.Message);
     }
+
+    [Fact]
+    public void Reports_every_violated_rule_at_once()
+    {
+        var options = new StoreHealthOptions { StoreTimeout = TimeSpan.Zero, MaxWarmPartitions = 0 };
+
+        var error = Assert.Throws<InvalidOperationException>(options.Validate);
+        Assert.Contains(nameof(StoreHealthOptions.StoreTimeout), error.Message);
+        Assert.Contains(nameof(StoreHealthOptions.MaxWarmPartitions), error.Message);
+    }
 }

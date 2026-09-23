@@ -42,4 +42,18 @@ public class ResilientRateLimiterOptionsTests
         var error = Assert.Throws<InvalidOperationException>(options.Validate);
         Assert.Contains(nameof(ResilientRateLimiterOptions.MaxWarmRetention), error.Message);
     }
+
+    [Fact]
+    public void Reports_every_violated_rule_at_once()
+    {
+        var options = new ResilientRateLimiterOptions
+        {
+            FallbackRecoveryTime = TimeSpan.Zero,
+            MaxWarmRetention = TimeSpan.Zero,
+        };
+
+        var error = Assert.Throws<InvalidOperationException>(options.Validate);
+        Assert.Contains(nameof(ResilientRateLimiterOptions.FallbackRecoveryTime), error.Message);
+        Assert.Contains(nameof(ResilientRateLimiterOptions.MaxWarmRetention), error.Message);
+    }
 }
