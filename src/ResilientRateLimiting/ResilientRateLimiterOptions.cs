@@ -1,7 +1,7 @@
 namespace ResilientRateLimiting;
 
 /// <summary>Configuration for one <see cref="ResilientRateLimiter"/>. Settings shared by every limiter on a store connection live on <see cref="StoreHealthOptions"/>.</summary>
-public sealed class ResilientRateLimiterOptions
+public sealed record ResilientRateLimiterOptions
 {
     /// <summary>What to do when the store cannot answer.</summary>
     public StoreFailureBehavior FailureBehavior { get; init; } = StoreFailureBehavior.LocalFallback;
