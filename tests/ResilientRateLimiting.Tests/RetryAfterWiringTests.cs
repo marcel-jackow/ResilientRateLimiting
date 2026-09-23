@@ -87,9 +87,7 @@ public class RetryAfterWiringTests
     [Fact]
     public async Task An_over_limit_local_fallback_rejection_gets_the_degraded_estimate()
     {
-        // D90/D100: a permit count above the fallback's whole limit throws ArgumentOutOfRangeException
-        // inside LocalMirror, which is served as StaticLease.Rejected — carrying no inner value. Must
-        // drive a real limiter (ruling 7): FakeRateLimiter never throws above its limit.
+        // A real limiter throws above its whole limit and the rejection carries no inner value; the fake only refuses.
         var clock = new FakeTimeProvider();
         using var primary = new FakeRateLimiter().AlwaysFail(new InvalidDataException("store down"));
         using var fallback = new FixedWindowRateLimiter(new FixedWindowRateLimiterOptions
@@ -115,8 +113,7 @@ public class RetryAfterWiringTests
     [Fact]
     public async Task A_fail_closed_rejection_estimates_from_the_break_duration_when_recovery_time_is_unset()
     {
-        // D101: a fail-closed limiter need not set FallbackRecoveryTime, so the estimate must fall
-        // back to StoreHealthOptions.BreakDuration rather than a bare "1 second" from zero.
+        // A fail-closed limiter need not set FallbackRecoveryTime, so the estimate falls back to BreakDuration.
         var clock = new FakeTimeProvider();
         var options = new ResilientRateLimiterOptions { FailureBehavior = StoreFailureBehavior.FailClosed };
         using var primary = new FakeRateLimiter().AlwaysFail(new InvalidDataException("store down"));

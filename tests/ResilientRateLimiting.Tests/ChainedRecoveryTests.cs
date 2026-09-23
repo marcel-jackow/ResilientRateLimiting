@@ -312,8 +312,7 @@ public class ChainedRecoveryTests
         Assert.False(suppressed.IsAcquired);
         Assert.True(suppressed.TryGetMetadata(MetadataName.RetryAfter.Name, out var retryAfter));
 
-        // Recovery counts as degraded (D34), b=30s: lo=max(6,2)=6, hi=max(12,6)=12; hi'=min(12,60)=12,
-        // lo'=min(6,6)=6, jitter in [6s,12s]. doubling=min(30, 60-12)=30. 30 + 30 + [6,12] = [66s, 72s] (D32-D35).
+        // 30 s local value, degraded, default 60 s cap: 30 + 30 doubling + 6..12 jitter.
         Assert.InRange((TimeSpan)retryAfter!, TimeSpan.FromSeconds(66), TimeSpan.FromSeconds(72));
     }
 

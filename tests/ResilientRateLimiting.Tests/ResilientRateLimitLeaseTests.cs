@@ -103,8 +103,7 @@ public class ResilientRateLimitLeaseTests
     [Fact]
     public void Prefers_the_supplied_retry_after_over_the_inner_one()
     {
-        // D102: the caller computes RetryAfter from the inner value already (jittered), so the
-        // supplied value replaces the inner one rather than losing to it.
+        // The supplied value was already computed from the inner one, so it replaces it.
         using var lease = new ResilientRateLimitLease(
             new StubLease(acquired: false, retryAfter: TimeSpan.FromSeconds(7)),
             LeaseSource.Distributed,

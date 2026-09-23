@@ -25,7 +25,7 @@ public class RetryAfterCalculatorTests
         return limiter.AttemptAcquire(1);
     }
 
-    /// <summary>A hand-written double whose metadata read throws, as ruling 4 requires.</summary>
+    /// <summary>A hand-written double whose metadata read throws.</summary>
     private sealed class ThrowingMetadataLease : RateLimitLease
     {
         public override bool IsAcquired => false;
@@ -116,7 +116,7 @@ public class RetryAfterCalculatorTests
     [Fact]
     public void Estimates_from_the_break_duration_when_the_fallback_recovery_time_is_unset()
     {
-        // D101: a fail-open/fail-closed limiter need not set FallbackRecoveryTime.
+        // A fail-open or fail-closed limiter need not set FallbackRecoveryTime.
         var options = new ResilientRateLimiterOptions();
         var calculator = new RetryAfterCalculator(options, BreakDuration, sampler: () => 0);
 
@@ -377,7 +377,7 @@ public class RetryAfterCalculatorTests
     public void Saturates_at_max_value_instead_of_overflowing()
     {
         // FallbackRecoveryTime and MaxAddedRetryDelay may legitimately be TimeSpan.MaxValue; the
-        // band, the doubling and the final sums must not throw OverflowException (ruling 4).
+        // band, the doubling and the final sums must not throw OverflowException.
         var options = new ResilientRateLimiterOptions
         {
             FallbackRecoveryTime = TimeSpan.MaxValue,
