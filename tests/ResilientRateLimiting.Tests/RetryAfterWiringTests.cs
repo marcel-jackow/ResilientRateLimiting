@@ -64,7 +64,7 @@ public class RetryAfterWiringTests
         using var lease = await limiter.AcquireAsync(1, TestContext.Current.CancellationToken);
 
         Assert.False(lease.IsAcquired);
-        // Not degraded: 10s plus extra in [max(10%,1s), max(20%,3s)] = [1s, 3s]: [11s, 13s].
+        // 10 s inner value, store up: a 1..3 s spread, no doubling. The sampler is random, so 11..13 s.
         Assert.InRange(RetryAfterOf(lease)!.Value, TimeSpan.FromSeconds(11), TimeSpan.FromSeconds(13));
     }
 
@@ -79,8 +79,7 @@ public class RetryAfterWiringTests
         using var lease = await limiter.AcquireAsync(1, TestContext.Current.CancellationToken);
 
         Assert.False(lease.IsAcquired);
-        // Degraded, b=10s: lo=max(2,2)=2, hi=max(4,6)=6; hi'=min(6,60)=6, lo'=min(2,3)=2, jitter in [2s,6s].
-        // doubling=min(10, 60-6)=10. 10 + 10 + [2,6] = [22s, 26s].
+        // 10 s inner value, store down: a 2..6 s spread plus 10 s doubling. The sampler is random, so 22..26 s.
         Assert.InRange(RetryAfterOf(lease)!.Value, TimeSpan.FromSeconds(22), TimeSpan.FromSeconds(26));
     }
 
@@ -104,9 +103,8 @@ public class RetryAfterWiringTests
         Assert.False(lease.IsAcquired);
         Assert.True(lease.TryGetMetadata(ResilientRateLimitLease.SourceMetadata, out var source));
         Assert.Equal(LeaseSource.LocalFallback, source);
-        // No inner value, so b = FallbackRecoveryTime 60s, degraded: lo=max(12,2)=12, hi=max(24,6)=24;
-        // hi'=min(24,60)=24, lo'=min(12,12)=12, jitter in [12s,24s]. doubling=min(60, 60-24)=36
-        // (the base is bigger than the room left over). 60 + 36 + [12,24] = [108s, 120s].
+        // No inner value, so the base is FallbackRecoveryTime (60 s); store down: the spread (12..24 s) takes up to 24 s
+        // of the 60 s cap, so the doubling gets the other 36 s. The sampler is random, so 60 + 36 + 12..24 = 108..120 s.
         Assert.InRange(RetryAfterOf(lease)!.Value, TimeSpan.FromSeconds(108), TimeSpan.FromSeconds(120));
     }
 
@@ -122,8 +120,7 @@ public class RetryAfterWiringTests
         using var lease = await limiter.AcquireAsync(1, TestContext.Current.CancellationToken);
 
         Assert.False(lease.IsAcquired);
-        // No inner value, so b = BreakDuration 5s, degraded: lo=max(1,2)=2, hi=max(2,6)=6; hi'=min(6,60)=6,
-        // lo'=min(2,3)=2, jitter in [2s,6s]. doubling=min(5, 60-6)=5. 5 + 5 + [2,6] = [12s, 16s].
+        // No inner value, so the base is BreakDuration (5 s); store down: a 2..6 s spread plus 5 s doubling. The sampler is random, so 12..16 s.
         Assert.InRange(RetryAfterOf(lease)!.Value, TimeSpan.FromSeconds(12), TimeSpan.FromSeconds(16));
     }
 
@@ -146,8 +143,7 @@ public class RetryAfterWiringTests
         using var suppressed = await limiter.AcquireAsync(1, cancellationToken);
 
         Assert.False(suppressed.IsAcquired);
-        // Degraded, b=30s (the local limiter's Retry-After): lo=max(6,2)=6, hi=max(12,6)=12; hi'=min(12,60)=12,
-        // lo'=min(6,6)=6, jitter in [6s,12s]. doubling=min(30, 60-12)=30. 30 + 30 + [6,12] = [66s, 72s].
+        // 30 s from the local limiter, store down: a 6..12 s spread plus 30 s doubling. The sampler is random, so 66..72 s.
         Assert.InRange(RetryAfterOf(suppressed)!.Value, TimeSpan.FromSeconds(66), TimeSpan.FromSeconds(72));
     }
 }

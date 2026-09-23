@@ -51,8 +51,7 @@ public class RetryAfterCalculatorTests
 
         var value = calculator.Compute(Rejected(TimeSpan.FromSeconds(10)), LeaseSource.Distributed);
 
-        // lo = max(10%*10, 1s) = 1s, hi = max(20%*10, 3s) = 3s; hi' = min(3, 60) = 3, lo' = min(1, 1.5) = 1.
-        // sampler 0 -> jitter = 1s; no doubling (normal). 10 + 1 = 11s.
+        // 10 s, store up: a 1..3 s spread, no doubling. The sampler picks the low end: 10 + 1 = 11 s.
         Assert.Equal(TimeSpan.FromSeconds(11), value);
     }
 
@@ -63,7 +62,7 @@ public class RetryAfterCalculatorTests
 
         var value = calculator.Compute(Rejected(TimeSpan.FromSeconds(10)), LeaseSource.Distributed);
 
-        // sampler 1 -> jitter = hi' = 3s. 10 + 3 = 13s.
+        // 10 s, store up: a 1..3 s spread, no doubling. The sampler picks the high end: 10 + 3 = 13 s.
         Assert.Equal(TimeSpan.FromSeconds(13), value);
     }
 
@@ -74,8 +73,7 @@ public class RetryAfterCalculatorTests
 
         var value = calculator.Compute(Rejected(TimeSpan.FromSeconds(10)), LeaseSource.LocalFallback);
 
-        // lo = max(20%*10, 2s) = 2s, hi = max(40%*10, 6s) = 6s; hi' = min(6, 60) = 6, lo' = min(2, 3) = 2.
-        // sampler 0 -> jitter = 2s. doubling = min(10, 60 - 6) = 10. 10 + 10 + 2 = 22s.
+        // 10 s, store down: a 2..6 s spread plus 10 s doubling. The sampler picks the low end: 10 + 10 + 2 = 22 s.
         Assert.Equal(TimeSpan.FromSeconds(22), value);
     }
 
@@ -86,7 +84,7 @@ public class RetryAfterCalculatorTests
 
         var value = calculator.Compute(Rejected(TimeSpan.FromSeconds(10)), LeaseSource.LocalFallback);
 
-        // sampler 1 -> jitter = hi' = 6s. doubling still 10 (cap has room). 10 + 10 + 6 = 26s.
+        // 10 s, store down: a 2..6 s spread plus 10 s doubling. The sampler picks the high end: 10 + 10 + 6 = 26 s.
         Assert.Equal(TimeSpan.FromSeconds(26), value);
     }
 
@@ -97,8 +95,7 @@ public class RetryAfterCalculatorTests
 
         var value = calculator.Compute(Rejected(), LeaseSource.Distributed);
 
-        // b = 60s (FallbackRecoveryTime). lo = max(6, 1) = 6, hi = max(12, 3) = 12; hi' = min(12, 60) = 12, lo' = min(6, 6) = 6.
-        // sampler 0 -> jitter = 6s. 60 + 6 = 66s.
+        // 60 s, store up: the spread is 10..20 %, so 6..12 s. The sampler picks the low end: 60 + 6 = 66 s.
         Assert.Equal(TimeSpan.FromSeconds(66), value);
     }
 
@@ -109,7 +106,7 @@ public class RetryAfterCalculatorTests
 
         var value = calculator.Compute(Rejected(), LeaseSource.Distributed);
 
-        // sampler 1 -> jitter = hi' = 12s. 60 + 12 = 72s.
+        // 60 s, store up: a 6..12 s spread. The sampler picks the high end: 60 + 12 = 72 s.
         Assert.Equal(TimeSpan.FromSeconds(72), value);
     }
 
@@ -122,8 +119,7 @@ public class RetryAfterCalculatorTests
 
         var value = calculator.Compute(Rejected(), LeaseSource.FailClosed);
 
-        // b = 5s (BreakDuration), degraded. lo = max(1, 2) = 2, hi = max(2, 6) = 6; hi' = min(6, 60) = 6, lo' = min(2, 3) = 2.
-        // sampler 0 -> jitter = 2s. doubling = min(5, 60 - 6) = 5 (room has plenty to spare). 5 + 5 + 2 = 12s.
+        // No FallbackRecoveryTime, so the base is BreakDuration (5 s); store down: 2..6 s spread plus 5 s doubling. The sampler picks the low end: 5 + 5 + 2 = 12 s.
         Assert.Equal(TimeSpan.FromSeconds(12), value);
     }
 
@@ -134,8 +130,7 @@ public class RetryAfterCalculatorTests
 
         var value = calculator.Compute(Rejected(TimeSpan.FromMinutes(60)), LeaseSource.Distributed);
 
-        // b = 3600s. lo = max(360, 1) = 360, hi = max(720, 3) = 720; hi' = min(720, 60) = 60, lo' = min(360, 30) = 30.
-        // sampler 0 -> jitter = 30s. 3600 + 30 = 3630s = 60 min + 30s.
+        // 60 min: 10..20 % would be 6..12 min, but the 60 s cap limits the spread to 30..60 s. The sampler picks the low end: 3600 + 30 = 3630 s.
         Assert.Equal(TimeSpan.FromSeconds(3630), value);
     }
 
@@ -146,7 +141,7 @@ public class RetryAfterCalculatorTests
 
         var value = calculator.Compute(Rejected(TimeSpan.FromMinutes(60)), LeaseSource.Distributed);
 
-        // sampler 1 -> jitter = hi' = 60s (the whole cap). 3600 + 60 = 3660s = 60 min + 60s.
+        // 60 min: the 60 s cap limits the spread to 30..60 s. The sampler picks the high end: 3600 + 60 = 3660 s.
         Assert.Equal(TimeSpan.FromSeconds(3660), value);
     }
 
@@ -157,9 +152,7 @@ public class RetryAfterCalculatorTests
 
         var value = calculator.Compute(Rejected(TimeSpan.FromMinutes(60)), LeaseSource.LocalFallback);
 
-        // b = 3600s degraded. lo = max(720, 2) = 720, hi = max(1440, 6) = 1440; hi' = min(1440, 60) = 60, lo' = min(720, 30) = 30.
-        // sampler 0 -> jitter = 30s. doubling = min(3600, 60 - 60) = 0: the band already spent the whole cap.
-        // 3600 + 0 + 30 = 3630s.
+        // 60 min, store down: the spread uses the whole 60 s cap, so nothing is left for the doubling. The sampler picks the low end: 3600 + 30 = 3630 s.
         Assert.Equal(TimeSpan.FromSeconds(3630), value);
     }
 
@@ -170,7 +163,7 @@ public class RetryAfterCalculatorTests
 
         var value = calculator.Compute(Rejected(TimeSpan.FromMinutes(60)), LeaseSource.LocalFallback);
 
-        // sampler 1 -> jitter = hi' = 60s, doubling still 0. 3600 + 60 = 3660s.
+        // 60 min, store down: the spread uses the whole 60 s cap, no doubling. The sampler picks the high end: 3600 + 60 = 3660 s.
         Assert.Equal(TimeSpan.FromSeconds(3660), value);
     }
 
@@ -181,8 +174,7 @@ public class RetryAfterCalculatorTests
 
         var value = calculator.Compute(Rejected(TimeSpan.FromSeconds(1)), LeaseSource.Distributed);
 
-        // b = 1s. lo = max(0.1, 1) = 1, hi = max(0.2, 3) = 3; hi' = min(3, 60) = 3, lo' = min(1, 1.5) = 1.
-        // sampler 0 -> jitter = 1s. 1 + 1 = 2s.
+        // 1 s: the whole-second minimums give a 1..3 s spread. The sampler picks the low end: 1 + 1 = 2 s.
         Assert.Equal(TimeSpan.FromSeconds(2), value);
     }
 
@@ -193,7 +185,7 @@ public class RetryAfterCalculatorTests
 
         var value = calculator.Compute(Rejected(TimeSpan.FromSeconds(1)), LeaseSource.Distributed);
 
-        // sampler 1 -> jitter = hi' = 3s. 1 + 3 = 4s.
+        // 1 s: a 1..3 s spread. The sampler picks the high end: 1 + 3 = 4 s.
         Assert.Equal(TimeSpan.FromSeconds(4), value);
     }
 
@@ -205,8 +197,7 @@ public class RetryAfterCalculatorTests
 
         var value = calculator.Compute(Rejected(TimeSpan.FromSeconds(10)), LeaseSource.LocalFallback);
 
-        // b = 10s degraded. lo = 2, hi = 6; hi' = min(6, 5) = 5, lo' = min(2, 2.5) = 2.
-        // sampler 0 -> jitter = 2s. doubling = min(10, 5 - 5) = 0. 10 + 0 + 2 = 12s.
+        // 5 s cap, store down: the spread takes all of it (2..5 s), nothing is left for the doubling. The sampler picks the low end: 10 + 2 = 12 s.
         Assert.Equal(TimeSpan.FromSeconds(12), value);
     }
 
@@ -218,7 +209,7 @@ public class RetryAfterCalculatorTests
 
         var value = calculator.Compute(Rejected(TimeSpan.FromSeconds(10)), LeaseSource.LocalFallback);
 
-        // sampler 1 -> jitter = hi' = 5s, doubling still 0. 10 + 5 = 15s.
+        // 5 s cap, store down: a 2..5 s spread, no doubling. The sampler picks the high end: 10 + 5 = 15 s.
         Assert.Equal(TimeSpan.FromSeconds(15), value);
     }
 
@@ -230,8 +221,7 @@ public class RetryAfterCalculatorTests
 
         var value = calculator.Compute(Rejected(TimeSpan.FromSeconds(10)), LeaseSource.Distributed);
 
-        // b = 10s normal. lo = 1, hi = 3; hi' = min(3, 2) = 2, lo' = min(1, 1) = 1.
-        // sampler 0 -> jitter = 1s. 10 + 1 = 11s.
+        // 2 s cap, store up: the spread is squeezed to 1..2 s. The sampler picks the low end: 10 + 1 = 11 s.
         Assert.Equal(TimeSpan.FromSeconds(11), value);
     }
 
@@ -243,7 +233,7 @@ public class RetryAfterCalculatorTests
 
         var value = calculator.Compute(Rejected(TimeSpan.FromSeconds(10)), LeaseSource.Distributed);
 
-        // sampler 1 -> jitter = hi' = 2s. 10 + 2 = 12s.
+        // 2 s cap, store up: a 1..2 s spread. The sampler picks the high end: 10 + 2 = 12 s.
         Assert.Equal(TimeSpan.FromSeconds(12), value);
     }
 
@@ -314,8 +304,7 @@ public class RetryAfterCalculatorTests
 
         var value = calculator.Compute(Rejected(), LeaseSource.Distributed);
 
-        // b = 0.1s, cap = 1ms: hi' = min(3s, 1ms) = 1ms, lo' = min(1s, 0.5ms) = 0.5ms.
-        // 0.1s + jitter(~0.5-1ms) is still well under 1s, so the final floor still applies.
+        // 1 ms cap: the spread stays under a millisecond, so the 1 s floor decides.
         Assert.Equal(TimeSpan.FromSeconds(1), value);
     }
 
@@ -336,7 +325,7 @@ public class RetryAfterCalculatorTests
     [Fact]
     public void Never_adds_more_than_the_cap()
     {
-        (TimeSpan b, LeaseSource source, TimeSpan cap)[] cases =
+        (TimeSpan baseValue, LeaseSource source, TimeSpan cap)[] cases =
         [
             (TimeSpan.FromSeconds(10), LeaseSource.Distributed, TimeSpan.FromSeconds(60)),
             (TimeSpan.FromSeconds(10), LeaseSource.LocalFallback, TimeSpan.FromSeconds(60)),
@@ -347,7 +336,7 @@ public class RetryAfterCalculatorTests
             (TimeSpan.FromSeconds(1), LeaseSource.Distributed, TimeSpan.FromSeconds(60)),
         ];
 
-        foreach (var (b, source, cap) in cases)
+        foreach (var (baseValue, source, cap) in cases)
         {
             var options = new ResilientRateLimiterOptions { FallbackRecoveryTime = TimeSpan.FromMinutes(1), MaxAddedRetryDelay = cap };
 
@@ -355,9 +344,9 @@ public class RetryAfterCalculatorTests
             {
                 var calculator = new RetryAfterCalculator(options, BreakDuration, sampler);
 
-                var value = calculator.Compute(b, source);
+                var value = calculator.Compute(baseValue, source);
 
-                Assert.True(value!.Value - b <= cap, $"b={b} source={source} cap={cap} produced {value} (added {value - b})");
+                Assert.True(value!.Value - baseValue <= cap, $"baseValue={baseValue} source={source} cap={cap} produced {value} (added {value - baseValue})");
             }
         }
     }
@@ -369,7 +358,7 @@ public class RetryAfterCalculatorTests
 
         var value = calculator.Compute(new ThrowingMetadataLease(), LeaseSource.Distributed);
 
-        // Falls back to the FallbackRecoveryTime estimate (60s), same as Estimates_from_the_fallback_recovery_time...: 66s.
+        // No inner value: the estimate is FallbackRecoveryTime (60 s).
         Assert.Equal(TimeSpan.FromSeconds(66), value);
     }
 
@@ -399,7 +388,7 @@ public class RetryAfterCalculatorTests
 
         var value = calculator.Compute((TimeSpan?)TimeSpan.FromSeconds(10), LeaseSource.Recovery);
 
-        // Recovery counts as degraded: same arithmetic as Is_longer_and_more_spread_out_while_degraded: 22s.
+        // A recovery refusal counts as store down.
         Assert.Equal(TimeSpan.FromSeconds(22), value);
     }
 }
