@@ -12,9 +12,6 @@ public sealed record ResilientRateLimiterOptions
     /// <summary>Upper bound on how long warm fallback state is held for an idle partition.</summary>
     public TimeSpan MaxWarmRetention { get; init; } = TimeSpan.FromMinutes(2);
 
-    /// <summary>Whether to tell the caller, in a response header, that limiting is degraded.</summary>
-    public bool EmitDegradedHeader { get; init; }
-
     /// <summary>Tag metrics with the partition key. One time series per key — unsafe for IP addresses.</summary>
     public bool TagMetricsByPartitionKey { get; init; }
 

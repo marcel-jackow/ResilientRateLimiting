@@ -1,0 +1,22 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <IsPackable>false</IsPackable>
+    <GenerateDocumentationFile>false</GenerateDocumentationFile>
+  </PropertyGroup>
+  <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+  </ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="xunit.v3" />
+    <PackageReference Include="xunit.runner.visualstudio" />
+    <PackageReference Include="Microsoft.NET.Test.Sdk" />
+    <PackageReference Include="Microsoft.AspNetCore.TestHost" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="../../src/ResilientRateLimiting.AspNetCore/ResilientRateLimiting.AspNetCore.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <Compile Include="../ResilientRateLimiting.Tests/FakeRateLimiter.cs" Link="FakeRateLimiter.cs" />
+  </ItemGroup>
+</Project>
