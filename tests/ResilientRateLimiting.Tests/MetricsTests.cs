@@ -4,9 +4,7 @@ using Xunit;
 
 namespace ResilientRateLimiting.Tests;
 
-// The Meter behind ResilientRateLimiterMetrics is a process-wide singleton and xUnit runs test
-// classes in parallel, so every test here uses its own Guid PolicyName and filters the recorded
-// measurements by it. Never assert over the unfiltered stream.
+// The Meter is a process-wide singleton shared across parallel test classes; every test uses its own Guid PolicyName and filters by it.
 public class MetricsTests
 {
     private static ResilientRateLimiterOptions Options(
@@ -31,9 +29,7 @@ public class MetricsTests
 
         private readonly List<(string Instrument, long Value, Dictionary<string, object?> Tags)> _measurements = [];
 
-        // Every Recorder listens on the same process-wide Meter, so a test running in parallel can
-        // append here while this one enumerates. Snapshot under the lock rather than exposing the
-        // list itself.
+        // Snapshot under the lock: the parallel static Meter lets another test append while this one enumerates.
         public IReadOnlyList<(string Instrument, long Value, Dictionary<string, object?> Tags)> Measurements
         {
             get
@@ -76,6 +72,25 @@ public class MetricsTests
         }
 
         public void Dispose() => _listener.Dispose();
+    }
+
+    [Fact]
+    public void Public_MeterName_matches_the_meter_instruments_are_published_under()
+    {
+        var seenMeterNames = new List<string>();
+        using var listener = new MeterListener
+        {
+            InstrumentPublished = (instrument, _) => seenMeterNames.Add(instrument.Meter.Name),
+        };
+        listener.Start();
+
+        // Touch the shared metrics instance so its Meter and instruments exist for Start() to observe.
+        using var primary = new FakeRateLimiter(permitLimit: 10);
+        using var fallback = new FakeRateLimiter(permitLimit: 10);
+        var storeHealth = new StoreHealth(new StoreHealthOptions(), new FakeTimeProvider());
+        using var limiter = new ResilientRateLimiter(primary, fallback, Options(Guid.NewGuid().ToString()), storeHealth, new FakeTimeProvider());
+
+        Assert.Contains(ResilientRateLimiter.MeterName, seenMeterNames);
     }
 
     [Fact]

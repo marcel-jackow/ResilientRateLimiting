@@ -26,17 +26,20 @@ public static class ResilientRateLimitPartition
         ArgumentNullException.ThrowIfNull(options);
         ArgumentNullException.ThrowIfNull(storeHealth);
 
-        var partitionOptions = options.TagMetricsByPartitionKey && options.PartitionKey is null
-            ? options with { PartitionKey = partitionKey?.ToString() }
-            : options;
-
         return RateLimitPartition.Get(
             partitionKey,
-            key => new ResilientRateLimiter(
-                primaryFactory(key),
-                fallbackFactory?.Invoke(key),
-                partitionOptions,
-                storeHealth,
-                timeProvider));
+            key =>
+            {
+                var partitionOptions = options.TagMetricsByPartitionKey && options.PartitionKey is null
+                    ? options with { PartitionKey = key?.ToString() }
+                    : options;
+
+                return new ResilientRateLimiter(
+                    primaryFactory(key),
+                    fallbackFactory?.Invoke(key),
+                    partitionOptions,
+                    storeHealth,
+                    timeProvider);
+            });
     }
 }

@@ -7,6 +7,9 @@ namespace ResilientRateLimiting;
 /// <remarks>Must not wrap another <see cref="ResilientRateLimiter"/>: nesting shadows the inner lease's source metadata.</remarks>
 public sealed class ResilientRateLimiter : RateLimiter
 {
+    /// <summary>The Meter name to pass to <c>AddMeter</c> when wiring up OpenTelemetry.</summary>
+    public const string MeterName = "ResilientRateLimiting";
+
     private readonly RateLimiter _primary;
     private readonly LocalMirror? _mirror;
     private readonly ResilientRateLimiterOptions _options;

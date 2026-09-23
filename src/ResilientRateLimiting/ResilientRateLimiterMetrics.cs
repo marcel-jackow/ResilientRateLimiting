@@ -7,7 +7,7 @@ namespace ResilientRateLimiting;
 internal sealed class ResilientRateLimiterMetrics
 {
     /// <summary>The meter name to subscribe to.</summary>
-    public const string MeterName = "ResilientRateLimiting";
+    public const string MeterName = ResilientRateLimiter.MeterName;
 
     public static readonly ResilientRateLimiterMetrics Shared = new();
 
