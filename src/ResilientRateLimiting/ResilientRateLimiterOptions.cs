@@ -18,6 +18,9 @@ public sealed class ResilientRateLimiterOptions
     /// <summary>Tag metrics with the partition key. One time series per key — unsafe for IP addresses.</summary>
     public bool TagMetricsByPartitionKey { get; init; }
 
+    /// <summary>The partition key, used as a metric tag only when <see cref="TagMetricsByPartitionKey"/> is set.</summary>
+    public string? PartitionKey { get; init; }
+
     /// <summary>Low-cardinality metric tag identifying this policy.</summary>
     public string PolicyName { get; init; } = "default";
 

@@ -9,6 +9,7 @@ public sealed class ResilientRateLimiter : RateLimiter
 {
     private readonly RateLimiter _primary;
     private readonly LocalMirror? _mirror;
+    private readonly ResilientRateLimiterOptions _options;
     private readonly StoreFailureBehavior _failureBehavior;
     private readonly TimeSpan _storeTimeout;
     private readonly TimeProvider _timeProvider;
@@ -43,6 +44,7 @@ public sealed class ResilientRateLimiter : RateLimiter
         }
 
         _primary = primary;
+        _options = options;
         _failureBehavior = options.FailureBehavior;
         _storeTimeout = storeHealth.Options.StoreTimeout;
         _timeProvider = timeProvider ?? TimeProvider.System;
@@ -94,7 +96,9 @@ public sealed class ResilientRateLimiter : RateLimiter
                 {
                     RecordActivity();
 
-                    return new ResilientRateLimitLease(StaticLease.Rejected, LeaseSource.LocalFallback, retryAfter);
+                    var refused = new ResilientRateLimitLease(StaticLease.Rejected, LeaseSource.Recovery, retryAfter);
+                    ResilientRateLimiterMetrics.Shared.RecordLease(_options, refused.Source, refused.IsAcquired);
+                    return refused;
                 }
             }
 
@@ -118,11 +122,16 @@ public sealed class ResilientRateLimiter : RateLimiter
 
                 ArmRecovery();
 
-                return new ResilientRateLimitLease(lease, LeaseSource.Distributed);
+                var distributed = new ResilientRateLimitLease(lease, LeaseSource.Distributed);
+                ResilientRateLimiterMetrics.Shared.RecordLease(_options, distributed.Source, distributed.IsAcquired);
+                return distributed;
             }
             catch (Exception exception) when (_storeHealth.IsStoreFailure(exception))
             {
                 Interlocked.Exchange(ref _lastFallbackAt, _timeProvider.GetTimestamp());
+
+                ResilientRateLimiterMetrics.Shared.RecordStoreFailure(_options, exception);
+                _storeHealth.ReportFirstOccurrence(exception);
 
                 // Anything thrown from here on has nowhere left to go, and reaches the caller.
                 var served = verdict == LocalVerdict.Granted
@@ -130,6 +139,8 @@ public sealed class ResilientRateLimiter : RateLimiter
                     : await FallbackAsync(permitCount, cancellationToken).ConfigureAwait(false);
 
                 RecordActivity();
+
+                ResilientRateLimiterMetrics.Shared.RecordLease(_options, served.Source, served.IsAcquired);
 
                 return served;
             }
@@ -284,7 +295,7 @@ public sealed class ResilientRateLimiter : RateLimiter
             TaskContinuationOptions.None,
             TaskScheduler.Default);
 
-    private async ValueTask<RateLimitLease> FallbackAsync(int permitCount, CancellationToken cancellationToken) =>
+    private async ValueTask<ResilientRateLimitLease> FallbackAsync(int permitCount, CancellationToken cancellationToken) =>
         _failureBehavior switch
         {
             StoreFailureBehavior.FailOpen =>

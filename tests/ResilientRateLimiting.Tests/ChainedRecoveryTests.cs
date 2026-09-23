@@ -50,7 +50,7 @@ public class ChainedRecoveryTests
         using var suppressed = await limiter.AcquireAsync(1, cancellationToken);
 
         Assert.False(suppressed.IsAcquired);
-        Assert.Equal(LeaseSource.LocalFallback, SourceOf(suppressed));
+        Assert.Equal(LeaseSource.Recovery, SourceOf(suppressed));
         Assert.Equal(attemptsAfterRecovery, primary.AcquireAttempts);
     }
 
@@ -76,7 +76,7 @@ public class ChainedRecoveryTests
         using (var suppressed = await limiter.AcquireAsync(1, cancellationToken))
         {
             Assert.False(suppressed.IsAcquired);
-            Assert.Equal(LeaseSource.LocalFallback, SourceOf(suppressed));
+            Assert.Equal(LeaseSource.Recovery, SourceOf(suppressed));
         }
 
         clock.Advance(TimeSpan.FromSeconds(31));
@@ -152,7 +152,7 @@ public class ChainedRecoveryTests
         using var tooLarge = await limiter.AcquireAsync(3, cancellationToken);
 
         Assert.False(tooLarge.IsAcquired);
-        Assert.Equal(LeaseSource.LocalFallback, SourceOf(tooLarge));
+        Assert.Equal(LeaseSource.Recovery, SourceOf(tooLarge));
         Assert.Equal(attemptsBefore, primary.AcquireAttempts);
         Assert.Equal(2, fallback.AvailablePermits);
     }
@@ -343,9 +343,12 @@ public class ChainedRecoveryTests
 
         var admitted = leases.Count(lease => lease.IsAcquired);
 
+        // The gate charges each concurrent request against the shared local budget: the ones it
+        // grants are served locally once the store call fails; the one it cannot cover is refused
+        // by the gate itself, without ever reaching the store.
         foreach (var lease in leases)
         {
-            Assert.Equal(LeaseSource.LocalFallback, SourceOf(lease));
+            Assert.Equal(lease.IsAcquired ? LeaseSource.LocalFallback : LeaseSource.Recovery, SourceOf(lease));
             lease.Dispose();
         }
 

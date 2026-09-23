@@ -1,5 +1,6 @@
 using Polly;
 using Polly.CircuitBreaker;
+using System.Collections.Concurrent;
 using System.Threading.RateLimiting;
 
 namespace ResilientRateLimiting;
@@ -8,6 +9,7 @@ namespace ResilientRateLimiting;
 public sealed class StoreHealth
 {
     private readonly ResiliencePipeline<RateLimitLease> _pipeline;
+    private readonly ConcurrentDictionary<Type, byte> _reportedFailureTypes = new();
     private int _livePartitions;
     private bool _reached;
 
@@ -51,4 +53,22 @@ public sealed class StoreHealth
     internal void RegisterPartition() => Interlocked.Increment(ref _livePartitions);
 
     internal void ReleasePartition() => Interlocked.Decrement(ref _livePartitions);
+
+    /// <summary>Invokes <see cref="StoreHealthOptions.OnStoreFailure"/> the first time this instance sees this exception's type. Never throws: the callback is caller code, and a handled store failure must not become an unhandled one.</summary>
+    internal void ReportFirstOccurrence(Exception exception)
+    {
+        if (Options.OnStoreFailure is not { } callback || !_reportedFailureTypes.TryAdd(exception.GetType(), 0))
+        {
+            return;
+        }
+
+        try
+        {
+            callback(exception);
+        }
+        catch
+        {
+            // See the summary: a throwing callback has nowhere useful to go.
+        }
+    }
 }

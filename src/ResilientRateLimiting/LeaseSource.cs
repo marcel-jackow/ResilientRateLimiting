@@ -14,4 +14,7 @@ public enum LeaseSource
 
     /// <summary>The store failed and the configured behaviour was to reject the request.</summary>
     FailClosed,
+
+    /// <summary>The store answered after a recent outage and the local counter refused before the store was asked.</summary>
+    Recovery,
 }
