@@ -132,7 +132,7 @@ public class RejectionTests
     public async Task Writes_the_degraded_header_only_when_opted_in()
     {
         var options = new RateLimiterOptions();
-        options.UseResilientDefaults(emitDegradedHeader: true);
+        options.UseResilientDefaults(emitDegradedHeader: _ => true);
 
         var context = new DefaultHttpContext();
         using var degradedLease = new ResilientRateLimitLease(new RejectedLease(null), LeaseSource.LocalFallback);
@@ -161,10 +161,69 @@ public class RejectionTests
     }
 
     [Fact]
+    public async Task Writes_no_degraded_header_when_the_predicate_is_explicitly_null()
+    {
+        var options = new RateLimiterOptions();
+        options.UseResilientDefaults(emitDegradedHeader: null);
+
+        var context = new DefaultHttpContext();
+        using var degradedLease = new ResilientRateLimitLease(new RejectedLease(null), LeaseSource.LocalFallback);
+
+        await options.OnRejected!(
+            new OnRejectedContext { HttpContext = context, Lease = degradedLease },
+            CancellationToken.None);
+
+        Assert.True(StringValues.IsNullOrEmpty(context.Response.Headers["X-RateLimit-Degraded"]));
+    }
+
+    [Fact]
+    public async Task Writes_no_degraded_header_when_the_predicate_returns_false()
+    {
+        var options = new RateLimiterOptions();
+        options.UseResilientDefaults(emitDegradedHeader: _ => false);
+
+        var context = new DefaultHttpContext();
+        using var degradedLease = new ResilientRateLimitLease(new RejectedLease(null), LeaseSource.LocalFallback);
+
+        await options.OnRejected!(
+            new OnRejectedContext { HttpContext = context, Lease = degradedLease },
+            CancellationToken.None);
+
+        Assert.True(StringValues.IsNullOrEmpty(context.Response.Headers["X-RateLimit-Degraded"]));
+    }
+
+    [Fact]
+    public async Task The_predicate_inspects_the_request_and_only_fires_for_a_matching_one()
+    {
+        var options = new RateLimiterOptions();
+        options.UseResilientDefaults(
+            emitDegradedHeader: ctx => ctx.Request.Headers["X-Internal"] == "1");
+
+        var internalContext = new DefaultHttpContext();
+        internalContext.Request.Headers["X-Internal"] = "1";
+        using var internalLease = new ResilientRateLimitLease(new RejectedLease(null), LeaseSource.LocalFallback);
+
+        await options.OnRejected!(
+            new OnRejectedContext { HttpContext = internalContext, Lease = internalLease },
+            CancellationToken.None);
+
+        Assert.Equal("true", internalContext.Response.Headers["X-RateLimit-Degraded"]);
+
+        var externalContext = new DefaultHttpContext();
+        using var externalLease = new ResilientRateLimitLease(new RejectedLease(null), LeaseSource.LocalFallback);
+
+        await options.OnRejected!(
+            new OnRejectedContext { HttpContext = externalContext, Lease = externalLease },
+            CancellationToken.None);
+
+        Assert.True(StringValues.IsNullOrEmpty(externalContext.Response.Headers["X-RateLimit-Degraded"]));
+    }
+
+    [Fact]
     public async Task A_recovery_sourced_lease_counts_as_degraded()
     {
         var options = new RateLimiterOptions();
-        options.UseResilientDefaults(emitDegradedHeader: true);
+        options.UseResilientDefaults(emitDegradedHeader: _ => true);
 
         var context = new DefaultHttpContext();
         using var recoveryLease = new ResilientRateLimitLease(new RejectedLease(null), LeaseSource.Recovery);
@@ -180,7 +239,7 @@ public class RejectionTests
     public async Task A_distributed_sourced_lease_never_gets_the_header_even_when_opted_in()
     {
         var options = new RateLimiterOptions();
-        options.UseResilientDefaults(emitDegradedHeader: true);
+        options.UseResilientDefaults(emitDegradedHeader: _ => true);
 
         var context = new DefaultHttpContext();
         using var distributedLease = new ResilientRateLimitLease(new RejectedLease(null), LeaseSource.Distributed);
@@ -190,5 +249,26 @@ public class RejectionTests
             CancellationToken.None);
 
         Assert.True(StringValues.IsNullOrEmpty(context.Response.Headers["X-RateLimit-Degraded"]));
+    }
+
+    [Fact]
+    public async Task The_predicate_is_not_called_for_a_distributed_sourced_lease()
+    {
+        var calls = 0;
+        var options = new RateLimiterOptions();
+        options.UseResilientDefaults(emitDegradedHeader: _ =>
+        {
+            calls++;
+            return true;
+        });
+
+        var context = new DefaultHttpContext();
+        using var distributedLease = new ResilientRateLimitLease(new RejectedLease(null), LeaseSource.Distributed);
+
+        await options.OnRejected!(
+            new OnRejectedContext { HttpContext = context, Lease = distributedLease },
+            CancellationToken.None);
+
+        Assert.Equal(0, calls);
     }
 }

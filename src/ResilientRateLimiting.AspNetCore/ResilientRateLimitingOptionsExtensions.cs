@@ -15,13 +15,12 @@ public static class ResilientRateLimitingOptionsExtensions
     /// </summary>
     /// <param name="options">The middleware options to configure.</param>
     /// <param name="emitDegradedHeader">
-    /// Whether to tell the caller that limiting is currently running on local state. Off by
-    /// default: an internet-facing API may not want to publish that.
+    /// Decides per request whether to tell this caller that limiting runs on local state; null never does.
     /// </param>
     /// <returns>The same options, for chaining.</returns>
     public static RateLimiterOptions UseResilientDefaults(
         this RateLimiterOptions options,
-        bool emitDegradedHeader = false)
+        Func<HttpContext, bool>? emitDegradedHeader = null)
     {
         ArgumentNullException.ThrowIfNull(options);
 
@@ -29,9 +28,10 @@ public static class ResilientRateLimitingOptionsExtensions
 
         options.OnRejected = (context, _) =>
         {
-            if (emitDegradedHeader
+            if (emitDegradedHeader is not null
                 && context.Lease.TryGetMetadata(ResilientRateLimitLease.SourceMetadata, out var source)
-                && source != LeaseSource.Distributed)
+                && source != LeaseSource.Distributed
+                && emitDegradedHeader(context.HttpContext))
             {
                 context.HttpContext.Response.Headers["X-RateLimit-Degraded"] = "true";
             }
