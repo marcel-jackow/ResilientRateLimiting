@@ -346,9 +346,6 @@ public class ChainedRecoveryTests
 
         var admitted = leases.Count(lease => lease.IsAcquired);
 
-        // The gate charges each concurrent request against the shared local budget: the ones it
-        // grants are served locally once the store call fails; the one it cannot cover is refused
-        // by the gate itself, without ever reaching the store.
         foreach (var lease in leases)
         {
             Assert.Equal(lease.IsAcquired ? LeaseSource.LocalFallback : LeaseSource.Recovery, SourceOf(lease));
