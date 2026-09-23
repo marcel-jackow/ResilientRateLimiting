@@ -1,6 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
     <Description>ASP.NET Core wiring for ResilientRateLimiting: 429 by default and a Retry-After header the middleware does not write for you.</Description>
+    <PackageTags>$(PackageTags);aspnetcore</PackageTags>
   </PropertyGroup>
   <ItemGroup>
     <FrameworkReference Include="Microsoft.AspNetCore.App" />

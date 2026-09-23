@@ -42,7 +42,7 @@ public static class ServiceCollectionExtensions
         {
             var options = provider.GetRequiredService<IOptions<StoreHealthOptions>>().Value;
             var loggerFactory = provider.GetService<ILoggerFactory>() ?? NullLoggerFactory.Instance;
-            var logger = loggerFactory.CreateLogger("ResilientRateLimiting");
+            var logger = loggerFactory.CreateLogger("ResilientRateLimiting.StoreHealth");
             var timeProvider = provider.GetService<TimeProvider>() ?? TimeProvider.System;
 
             return new StoreHealth(options.WithLogging(logger), timeProvider);

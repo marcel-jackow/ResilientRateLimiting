@@ -4,6 +4,7 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using Xunit;
 
@@ -13,6 +14,41 @@ public class ServiceCollectionExtensionsTests
 {
     private static IConfiguration ConfigurationFrom(Dictionary<string, string?> values) =>
         new ConfigurationBuilder().AddInMemoryCollection(values).Build();
+
+    private sealed class CategoryCapturingLoggerFactory : ILoggerFactory
+    {
+        public string? Category { get; private set; }
+
+        public ILogger CreateLogger(string categoryName)
+        {
+            Category = categoryName;
+            return NullLogger.Instance;
+        }
+
+        public void AddProvider(ILoggerProvider provider)
+        {
+        }
+
+        public void Dispose()
+        {
+        }
+    }
+
+    [Fact]
+    public void StoreHealth_is_logged_under_the_store_health_category()
+    {
+        var configuration = ConfigurationFrom([]);
+        var loggerFactory = new CategoryCapturingLoggerFactory();
+
+        var services = new ServiceCollection();
+        services.AddSingleton<ILoggerFactory>(loggerFactory);
+        services.AddResilientRateLimiting(configuration);
+
+        using var provider = services.BuildServiceProvider();
+        provider.GetRequiredService<StoreHealth>();
+
+        Assert.Equal("ResilientRateLimiting.StoreHealth", loggerFactory.Category);
+    }
 
     [Fact]
     public async Task An_invalid_configuration_section_fails_the_host_at_start_not_on_first_use()
