@@ -15,8 +15,10 @@ var rateLimits = builder.Configuration.GetSection("RateLimits").Get<RateLimitsOp
 var redisConnectionString = builder.Configuration.GetConnectionString("Redis")
     ?? throw new InvalidOperationException("The ConnectionStrings:Redis configuration value is missing.");
 
+// snippet: web-async-timeout
 var redisOptions = ConfigurationOptions.Parse(redisConnectionString);
 redisOptions.AsyncTimeout = 20; // milliseconds; stays at or below StoreTimeout so a slow store never blocks a request past the configured limit.
+// end-snippet
 
 var redis = await ConnectionMultiplexer.ConnectAsync(redisOptions);
 

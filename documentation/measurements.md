@@ -94,6 +94,21 @@ Setup (2026-09-24, same machine, a script outside this repository): `RedisRateLi
 
 **Measured:** none of the three gives a value under the standard name. The fixed window limiter uses its own name, `RATELIMIT_RETRYAFTER`, which `ResilientRateLimiting` does not read. So a rejection by a healthy Redis carries no Retry-After from this library.
 
+## Redis keys, their type and their expiry
+
+This section supports [06-production.md](06-production.md#memory-in-redis) and [06-production.md](06-production.md#redis-eviction-and-the-silent-failure): what does `RedisRateLimiting` actually store per partition, and does it set an expiry?
+
+Setup (2026-09-24, same machine, a script outside this repository): `RedisRateLimiting` 1.2.1 against a `redis:7-alpine` container, one `RedisSlidingWindowRateLimiter` and one `RedisFixedWindowRateLimiter`, both `PermitLimit = 5` and `Window = 30 s`, one `AcquireAsync(1)` call on each, then `KEYS *`, `TYPE`, `TTL` and, for the sorted set, `ZCARD` on every key found.
+
+| Limiter | Keys | Redis type | Content after one allowed request | TTL |
+|---|---|---|---|---|
+| `RedisSlidingWindowRateLimiter` | `rl:sw:{key}` | sorted set | one entry (`ZCARD` = 1) | ~30 s (the window) |
+| `RedisSlidingWindowRateLimiter` | `rl:sw:{key}:stats` | hash | `total_successful` = 1 | ~30 s |
+| `RedisFixedWindowRateLimiter` | `rl:fw:{key}` | string | the count, as text (`"1"`) | ~30 s |
+| `RedisFixedWindowRateLimiter` | `rl:fw:{key}:exp` | string | a stored expiry timestamp | ~30 s |
+
+**Measured:** every key `RedisRateLimiting` writes carries a TTL close to the configured window; none is left to grow old forever. The sliding window keeps one sorted-set entry per allowed request (so its size is bounded by `PermitLimit`, not by how many requests were rejected), plus one small hash for its own bookkeeping. The fixed window keeps a single integer per partition. `{key}` above is the partition key wrapped in literal curly braces, which is a Redis cluster hash tag: it keeps both keys for one partition on the same cluster node.
+
 ## What was not measured
 
 - Server GC (`ServerGarbageCollection` was off for every run on this page).
