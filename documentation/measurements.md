@@ -58,6 +58,42 @@ This matters for `StoreTimeout`. The default, 20 ms, is a **starting point**, no
 
 One more measured number, because a fast timeout is only as accurate as the timer under it. A 20 ms `Task.Delay` does not always come back in 20 ms: on Windows, without raising the OS timer resolution, sleeps and delays are rounded up to the system timer's tick. Folklore quotes 15.6 ms as the tick size, so a 20 ms delay would be expected to complete after one or two ticks — around 16–31 ms. Rather than repeat that number, this was checked directly: a 20-line script (`Task.Delay(TimeSpan.FromMilliseconds(20))`, 200 times, in the session scratchpad, not part of this repository) measured a median of 31.82 ms and a maximum of 35.98 ms on this machine. So the folklore figure is roughly right in shape but the actual median was higher than 15.6 ms alone would suggest. Practically: on Windows, a `StoreTimeout` near the 20 ms default can itself be inflated by 10–15 ms of pure timer rounding, on top of the real network wait — one more reason to measure your own environment (which may well be Linux in production, where timer resolution is finer) rather than trust either the default or this note.
 
+## RedisRateLimiting alone while Redis is unreachable
+
+This section answers one question for `01-concepts.md#which-limiter-should-i-use`: what does a plain `RedisRateLimiting` limiter, with no `ResilientRateLimiting` around it, do when Redis cannot be reached?
+
+Setup (2026-09-24, same machine as above): a small script outside this repository (a .NET 10 file-based app in the session scratchpad), `RedisRateLimiting` 1.2.1, StackExchange.Redis 2.9.11 with its default settings, one `RedisSlidingWindowRateLimiter` (limit 100 per minute), three timed `AcquireAsync(1)` calls per case.
+
+- **Case A, Redis down from the start:** the connection string points at a port where nothing listens, with `abortConnect=false` so the program can start.
+- **Case B, Redis stops while in use:** a `redis:7-alpine` container answers three calls normally (6 ms, then 0 ms, 0 ms), then the container is stopped with `docker stop`, and three more calls follow.
+
+| Case | Call | Time until the call ended | Result |
+|---|---|---|---|
+| A | 1 | 6,013 ms | `StackExchange.Redis.RedisConnectionException` |
+| A | 2 | 5,996 ms | `RedisConnectionException` |
+| A | 3 | 4,999 ms | `RedisConnectionException` |
+| B, after stop | 1 | 5,804 ms | `RedisConnectionException` |
+| B, after stop | 2 | 4,989 ms | `RedisConnectionException` |
+| B, after stop | 3 | 5,002 ms | `RedisConnectionException` |
+
+The exception message was "The message timed out in the backlog attempting to send because no connection became available (5000ms)". No call returned a lease.
+
+**Measured:** while Redis cannot be reached, every call waits about 5 seconds (the Redis client's default timeout) and then throws. Nothing remembers that Redis is down, so the next call waits again. This is the behaviour `ResilientRateLimiting` replaces with a short store timeout, a circuit breaker and a chosen outage behaviour.
+
+## RedisRateLimiting and the Retry-After value
+
+This section supports `01-concepts.md#retry-after`: does a healthy Redis limiter give a Retry-After value when it rejects?
+
+Setup (2026-09-24, same machine, a script outside this repository): `RedisRateLimiting` 1.2.1 against a `redis:7-alpine` container. For each of `RedisSlidingWindowRateLimiter`, `RedisFixedWindowRateLimiter` and `RedisTokenBucketRateLimiter` with a limit of 1, two `AcquireAsync(1)` calls; the second is rejected, and its metadata is read.
+
+| Limiter | Metadata names on the rejected lease | Value under the standard `MetadataName.RetryAfter` |
+|---|---|---|
+| `RedisSlidingWindowRateLimiter` | `RATELIMIT_LIMIT`, `RATELIMIT_REMAINING` | none |
+| `RedisFixedWindowRateLimiter` | `RATELIMIT_LIMIT`, `RATELIMIT_REMAINING`, `RATELIMIT_RETRYAFTER` | none |
+| `RedisTokenBucketRateLimiter` | `RATELIMIT_LIMIT`, `RATELIMIT_REMAINING` | none |
+
+**Measured:** none of the three gives a value under the standard name. The fixed window limiter uses its own name, `RATELIMIT_RETRYAFTER`, which `ResilientRateLimiting` does not read. So a rejection by a healthy Redis carries no Retry-After from this library.
+
 ## What was not measured
 
 - Server GC (`ServerGarbageCollection` was off for every run on this page).
