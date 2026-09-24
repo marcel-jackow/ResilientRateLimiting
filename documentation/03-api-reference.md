@@ -243,7 +243,11 @@ From `samples/ResilientRateLimiting.Samples.Console/Scenarios.cs`
 
 **Returns.** `null`. **Throws.** Nothing.
 
+**Example.** None: the method always returns `null`, so there is nothing to show.
+
 **Common mistakes.** Code that reads `GetStatistics()!.CurrentAvailablePermits` gets a `NullReferenceException`.
+
+**See also.** [`IdleDuration`](#idleduration), [05-telemetry.md](05-telemetry.md).
 
 <a id="idleduration"></a>
 ### `IdleDuration`
@@ -260,7 +264,16 @@ Warm state is held for at most `MaxWarmRetention` or `FallbackRecoveryTime`, whi
 
 **When you use it.** You do not read it yourself. It is how the wrapper keeps a partition alive just long enough.
 
+**Example.** Take a partition with `FailureBehavior = LocalFallback`, `FallbackRecoveryTime` = 1 minute and the default `MaxWarmRetention` of 2 minutes, so warm state is kept for 1 minute (the shorter of the two). Its last request was allowed by the store, so that request was also charged to the fallback limiter.
+
+- 30 seconds later, with no request in progress: `IdleDuration` is `null`. The fallback still holds warm state, so `PartitionedRateLimiter` keeps the partition.
+- 90 seconds later: warm state is older than 1 minute, so `IdleDuration` is about 1 minute 30 seconds, and `PartitionedRateLimiter` may remove the partition.
+
+With `FailOpen` or `FailClosed` the fallback is never charged, so `IdleDuration` is simply the time since the last request.
+
 **Common mistakes.** Wrapping a primary limiter whose partitions you expect to be removed at once. With `LocalFallback`, an idle partition stays in memory for up to the warm retention time. That is intended; the cost per partition is about 1 KB (**measured**, see [measurements.md](measurements.md#memory-per-partition)).
+
+**See also.** [`Dispose()` and `DisposeAsync()`](#dispose), [`ResilientRateLimiterOptions`](#limiter-options) (`MaxWarmRetention`), [`StoreHealthOptions`](#storehealthoptions) (`MaxWarmPartitions`), [Warm state](01-concepts.md#warm-state).
 
 <a id="dispose"></a>
 ### `Dispose()` and `DisposeAsync()`
@@ -813,7 +826,11 @@ From `samples/ResilientRateLimiting.Samples.Console/Scenarios.cs`
 
 **When you use it.** To check a computed value before you set it, or in your own validation. It is a fixed limit, not a setting.
 
+**Example.** No sample region shows the bound. To check a computed value yourself before you set it, compare it: `if (fallbackRecoveryTime > ResilientRateLimiterOptions.MaxFallbackRecoveryTime) { /* fix the unit */ }`. Otherwise `Validate()` reports it for you.
+
 **Common mistakes.** A fallback with a window longer than one day. The library refuses its recovery time. Even a one-day window, which is accepted, is a poor fit for a local fallback: a restart clears the local count, and Retry-After estimates become very long (see [Choosing a window length](01-concepts.md#choosing-a-window-length)).
+
+**See also.** [`FallbackRecoveryTime`](#fallbackrecoverytime), [`ResilientRateLimiterOptions.Validate()`](#limiter-options-validate).
 
 <a id="limiter-options-validate"></a>
 ### `ResilientRateLimiterOptions.Validate()`
@@ -1071,6 +1088,8 @@ From `samples/ResilientRateLimiting.Samples.Console/Scenarios.cs`
 - **Expecting a Retry-After on every rejection.** A healthy Redis limiter gives none; check the return value of `TryGetMetadata`.
 - **Wrapping a lease that is already a `ResilientRateLimitLease`.** The outer source tag hides the inner one, the same problem as nesting wrappers.
 
+**See also.** [`ResilientRateLimitLease`](#resilientratelimitlease), [`LeaseSource`](#leasesource), [`UseResilientDefaults`](#useresilientdefaults).
+
 <a id="leasesource"></a>
 ### `LeaseSource` (enum)
 
@@ -1094,6 +1113,8 @@ A lease from `AttemptAcquire` has no source at all (see [`AttemptAcquire`](#atte
 
 - **Reading a missing source as `Distributed`.** `TryGetMetadata` returns `false` for a lease with no source; `out var source` is then the default value of the enum, which is `Distributed`. Check the return value.
 - **Alerting on single `LocalFallback` leases.** One slow store call gives one; alert on a rate over time.
+
+**See also.** [`ResilientRateLimitLease`](#resilientratelimitlease), [`StoreFailureBehavior`](#storefailurebehavior), [`AcquireAsync`](#acquireasync), [05-telemetry.md](05-telemetry.md).
 
 <a id="aspnet-core"></a>
 ## ASP.NET Core
