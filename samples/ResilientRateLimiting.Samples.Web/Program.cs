@@ -1,7 +1,5 @@
 using Microsoft.AspNetCore.RateLimiting;
 using OpenTelemetry.Metrics;
-using Polly.CircuitBreaker;
-using Polly.Timeout;
 using RedisRateLimiting;
 using ResilientRateLimiting;
 using ResilientRateLimiting.AspNetCore;
@@ -25,9 +23,8 @@ var redis = await ConnectionMultiplexer.ConnectAsync(redisOptions);
 // snippet: web-configure
 StoreHealthOptions Configure(StoreHealthOptions options) => options with
 {
-    // Must still include the library's own wrapper exceptions (the breaker and its call timeout), or a
-    // narrowed ShouldHandle silently stops failing over and an exception reaches the caller instead.
-    ShouldHandle = exception => exception is RedisException or TimeoutRejectedException or BrokenCircuitException,
+    // The library's own timeout and breaker always count as store failures, so this only names the store's own exceptions.
+    ShouldHandle = exception => exception is RedisException,
     OnStoreFailure = exception => Console.WriteLine($"Store failure: {exception.GetType().Name}"),
 };
 // end-snippet

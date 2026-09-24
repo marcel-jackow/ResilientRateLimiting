@@ -27,7 +27,7 @@ public sealed record StoreHealthOptions
     /// <summary>Scales the local budget until some limiter on this store first reaches it. 1.0 means no effect.</summary>
     public double ColdStartFallbackFactor { get; init; } = 1.0;
 
-    /// <summary>Overrides classification. True treats the exception as a store failure.</summary>
+    /// <summary>Decides, for exceptions thrown by the store limiter, whether one counts as a store failure. The library's own timeout and open-breaker exceptions always count as store failures, and caller cancellation never does, regardless of what this returns.</summary>
     public Func<Exception, bool>? ShouldHandle { get; init; }
 
     /// <summary>Raised for the first failure of each exception type, and again once that type has been quiet for <see cref="BreakerSamplingDuration"/> or the breaker has closed since it last failed.</summary>

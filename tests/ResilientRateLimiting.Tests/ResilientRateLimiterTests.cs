@@ -88,6 +88,30 @@ public class ResilientRateLimiterTests
     }
 
     [Fact]
+    public async Task A_caller_predicate_does_not_stop_the_timeout_from_falling_back()
+    {
+        var clock = new FakeTimeProvider();
+        var storeOptions = new StoreHealthOptions
+        {
+            StoreTimeout = TimeSpan.FromMilliseconds(20),
+            ShouldHandle = exception => exception is InvalidDataException,
+        };
+
+        using var primary = new FakeRateLimiter().HangUntilReleased();
+        using var fallback = new FakeRateLimiter(permitLimit: 1);
+        using var limiter = new ResilientRateLimiter(primary, fallback, Options(), new StoreHealth(storeOptions, clock), clock);
+
+        var pending = limiter.AcquireAsync(1, TestContext.Current.CancellationToken).AsTask();
+        Assert.False(pending.IsCompleted);
+
+        clock.Advance(TimeSpan.FromMilliseconds(25));
+
+        using var lease = await pending;
+        Assert.True(lease.IsAcquired);
+        Assert.Equal(LeaseSource.LocalFallback, SourceOf(lease));
+    }
+
+    [Fact]
     public async Task The_cutoff_is_the_one_configured_on_the_store_connection()
     {
         var clock = new FakeTimeProvider();
