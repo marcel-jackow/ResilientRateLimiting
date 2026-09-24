@@ -11,6 +11,9 @@ else
     Console.WriteLine();
 }
 
+await Run("built-in-limiter", Scenarios.BuiltInLimiter);
+await Run("limiter-kinds", Scenarios.LimiterKinds);
+await Run("built-in-partitioned", Scenarios.BuiltInPartitioned);
 await Run("store-health", Scenarios.StoreHealthScenario);
 await Run("local-budget", Scenarios.LocalBudgetScenario);
 await Run("constructor", Scenarios.Constructor);

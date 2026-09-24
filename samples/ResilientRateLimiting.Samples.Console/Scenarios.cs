@@ -398,4 +398,88 @@ internal static class Scenarios
         using var lease = await limiter.AcquireAsync(1);
         Console.WriteLine($"Allowed: {lease.IsAcquired}, fallback recovery time: {fallbackRecoveryTime}");
     }
+
+    public static async Task BuiltInLimiter()
+    {
+        // snippet: built-in-limiter
+        using var limiter = new FixedWindowRateLimiter(new FixedWindowRateLimiterOptions
+        {
+            PermitLimit = 2,
+            Window = TimeSpan.FromMinutes(1),
+            QueueLimit = 0,
+        });
+
+        for (var request = 1; request <= 3; request++)
+        {
+            using var lease = await limiter.AcquireAsync(permitCount: 1);
+
+            if (lease.IsAcquired)
+            {
+                Console.WriteLine($"Request {request}: allowed");
+            }
+            else
+            {
+                lease.TryGetMetadata(MetadataName.RetryAfter, out var retryAfter);
+                Console.WriteLine($"Request {request}: rejected, retry after {retryAfter}");
+            }
+        }
+        // end-snippet
+    }
+
+    public static Task LimiterKinds()
+    {
+        // snippet: limiter-kinds
+        // At most 100 requests in each fixed minute (10:00:00-10:00:59, then 10:01:00-10:01:59, ...).
+        using var fixedWindow = new FixedWindowRateLimiter(new FixedWindowRateLimiterOptions
+        {
+            PermitLimit = 100,
+            Window = TimeSpan.FromMinutes(1),
+        });
+
+        // At most 100 requests in any rolling minute, tracked in 6 segments of 10 seconds.
+        using var slidingWindow = new SlidingWindowRateLimiter(new SlidingWindowRateLimiterOptions
+        {
+            PermitLimit = 100,
+            Window = TimeSpan.FromMinutes(1),
+            SegmentsPerWindow = 6,
+        });
+
+        // A bucket of 20 tokens; 10 tokens are added back every second.
+        using var tokenBucket = new TokenBucketRateLimiter(new TokenBucketRateLimiterOptions
+        {
+            TokenLimit = 20,
+            TokensPerPeriod = 10,
+            ReplenishmentPeriod = TimeSpan.FromSeconds(1),
+        });
+
+        // At most 5 requests running at the same time; a permit comes back when its lease is disposed.
+        using var concurrency = new ConcurrencyLimiter(new ConcurrencyLimiterOptions
+        {
+            PermitLimit = 5,
+        });
+        // end-snippet
+
+        Console.WriteLine("Built one limiter of each kind.");
+
+        return Task.CompletedTask;
+    }
+
+    public static async Task BuiltInPartitioned()
+    {
+        // snippet: built-in-partitioned
+        using var limiter = PartitionedRateLimiter.Create<string, string>(clientId =>
+            RateLimitPartition.GetFixedWindowLimiter(clientId, _ => new FixedWindowRateLimiterOptions
+            {
+                PermitLimit = 1,
+                Window = TimeSpan.FromMinutes(1),
+                QueueLimit = 0,
+            }));
+
+        using var first = await limiter.AcquireAsync("client-a");
+        using var second = await limiter.AcquireAsync("client-a");
+        using var other = await limiter.AcquireAsync("client-b");
+
+        Console.WriteLine($"client-a first: {first.IsAcquired}, client-a second: {second.IsAcquired}, client-b: {other.IsAcquired}");
+        // end-snippet
+    }
 }
