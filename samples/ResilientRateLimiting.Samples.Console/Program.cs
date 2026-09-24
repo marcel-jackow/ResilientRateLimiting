@@ -21,6 +21,15 @@ await Run("fail-open", Scenarios.FailOpen);
 await Run("fail-closed", Scenarios.FailClosed);
 await Run("read-source", Scenarios.ReadSource);
 await Run("read-retry-after", Scenarios.ReadRetryAfter);
+await Run("store-failure-callback", Scenarios.StoreFailureCallback);
+await Run("options-copy", Scenarios.OptionsCopy);
+await Run("validate", Scenarios.Validate);
+await Run("time-provider", Scenarios.TimeProviderScenario);
+await Run("acquire-async-not-attempt", Scenarios.AcquireAsyncNotAttempt);
+await Run("dispose", Scenarios.DisposeScenario);
+await Run("permit-count-check", Scenarios.PermitCountCheck);
+await Run("token-bucket-fallback", Scenarios.TokenBucketFallback);
+await Run("sliding-window-fallback", Scenarios.SlidingWindowFallback);
 
 return;
 
