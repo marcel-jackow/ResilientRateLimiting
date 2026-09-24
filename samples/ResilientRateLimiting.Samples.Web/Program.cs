@@ -1,5 +1,7 @@
 using Microsoft.AspNetCore.RateLimiting;
 using OpenTelemetry.Metrics;
+using Polly.CircuitBreaker;
+using Polly.Timeout;
 using RedisRateLimiting;
 using ResilientRateLimiting;
 using ResilientRateLimiting.AspNetCore;
@@ -23,7 +25,9 @@ var redis = await ConnectionMultiplexer.ConnectAsync(redisOptions);
 // snippet: web-configure
 StoreHealthOptions Configure(StoreHealthOptions options) => options with
 {
-    ShouldHandle = exception => exception is RedisException or TimeoutException,
+    // Must still include the library's own wrapper exceptions (the breaker and its call timeout), or a
+    // narrowed ShouldHandle silently stops failing over and an exception reaches the caller instead.
+    ShouldHandle = exception => exception is RedisException or TimeoutRejectedException or BrokenCircuitException,
     OnStoreFailure = exception => Console.WriteLine($"Store failure: {exception.GetType().Name}"),
 };
 // end-snippet
@@ -37,7 +41,10 @@ builder.Services.AddResilientRateLimiting(
 
 // snippet: web-with-logging
 // A second store connection: built by hand, so its StoreHealth is built by hand too, with logging attached manually.
-var secondaryRedisOptions = ConfigurationOptions.Parse(redisConnectionString);
+var secondaryRedisConnectionString = builder.Configuration.GetConnectionString("RedisSecondary")
+    ?? throw new InvalidOperationException("The ConnectionStrings:RedisSecondary configuration value is missing.");
+
+var secondaryRedisOptions = ConfigurationOptions.Parse(secondaryRedisConnectionString);
 secondaryRedisOptions.AsyncTimeout = 20;
 
 var secondaryRedis = await ConnectionMultiplexer.ConnectAsync(secondaryRedisOptions);
@@ -47,14 +54,14 @@ var secondaryLogger = LoggerFactory.Create(logging => logging.AddConsole())
 var secondaryStoreHealth = new StoreHealth(new StoreHealthOptions().WithLogging(secondaryLogger));
 // end-snippet
 
-builder.Services.AddSingleton(secondaryRedis);
-builder.Services.AddSingleton(secondaryStoreHealth);
-
 var policyOptions = new ResilientRateLimiterOptions
 {
     PolicyName = "per-client",
     FallbackRecoveryTime = TimeSpan.FromSeconds(rateLimits.WindowSeconds),
 };
+
+// The second connection's own policy, not registered in DI: see the comment above AddPolicy("per-client-secondary").
+var secondaryPolicyOptions = policyOptions with { PolicyName = "per-client-secondary" };
 
 var localPermitLimit = LocalBudget.ForReplicas(
     sharedPermitLimit: rateLimits.PermitLimit,
@@ -91,6 +98,31 @@ builder.Services.AddRateLimiter(limiterOptions =>
             storeHealth);
     });
     // end-snippet
+
+    // The second store connection's StoreHealth is never registered in DI: a second unkeyed AddSingleton would
+    // shadow the first one, because GetRequiredService<StoreHealth>() only ever returns the last registration.
+    // It is captured by this lambda instead, the same way secondaryRedis is.
+    limiterOptions.AddPolicy("per-client-secondary", context =>
+    {
+        var clientId = context.Request.Headers["X-Client-Id"].FirstOrDefault() ?? "anonymous";
+
+        return ResilientRateLimitPartition.Get(
+            clientId,
+            key => new RedisSlidingWindowRateLimiter<string>(key, new RedisSlidingWindowRateLimiterOptions
+            {
+                PermitLimit = rateLimits.PermitLimit,
+                Window = TimeSpan.FromSeconds(rateLimits.WindowSeconds),
+                ConnectionMultiplexerFactory = () => secondaryRedis,
+            }),
+            key => new FixedWindowRateLimiter(new FixedWindowRateLimiterOptions
+            {
+                PermitLimit = localPermitLimit,
+                Window = TimeSpan.FromSeconds(rateLimits.WindowSeconds),
+                QueueLimit = 0,
+            }),
+            secondaryPolicyOptions,
+            secondaryStoreHealth);
+    });
 });
 
 // snippet: web-meter
@@ -102,6 +134,7 @@ var app = builder.Build();
 app.UseRateLimiter();
 
 app.MapGet("/", () => "hello").RequireRateLimiting("per-client");
+app.MapGet("/secondary", () => "hello from secondary").RequireRateLimiting("per-client-secondary");
 
 app.Run();
 
