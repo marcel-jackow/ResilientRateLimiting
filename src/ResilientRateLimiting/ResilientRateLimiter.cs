@@ -4,7 +4,15 @@ using System.Threading.RateLimiting;
 namespace ResilientRateLimiting;
 
 /// <summary>Wraps a store-backed rate limiter so a slow or unreachable store degrades instead of failing the request.</summary>
-/// <remarks>Must not wrap another <see cref="ResilientRateLimiter"/>: nesting shadows the inner lease's source metadata.</remarks>
+/// <remarks>
+/// <para>Must not wrap another <see cref="ResilientRateLimiter"/>: nesting shadows the inner lease's source metadata,
+/// because the outer instance always reports its own <see cref="LeaseSource"/> instead of passing the inner one through.</para>
+/// <para>Call <c>AcquireAsync</c> to use this type. <c>AttemptAcquire</c> always rejects, because no store was consulted.</para>
+/// <para>When the store limiter or the fallback limiter throws <see cref="ArgumentException"/>,
+/// <see cref="ObjectDisposedException"/>, or <see cref="InvalidOperationException"/>, and
+/// <see cref="StoreHealthOptions.ShouldHandle"/> does not say otherwise, the exception is treated as a caller
+/// mistake, not a store failure: it reaches the caller instead of triggering the fallback path.</para>
+/// </remarks>
 public sealed class ResilientRateLimiter : RateLimiter
 {
     /// <summary>The Meter name to pass to <c>AddMeter</c> when wiring up OpenTelemetry.</summary>
@@ -30,6 +38,8 @@ public sealed class ResilientRateLimiter : RateLimiter
     /// <param name="options">Configuration for this limiter, validated here so a wrong setup fails at startup. Everything shared by the store connection comes from <paramref name="storeHealth"/>.</param>
     /// <param name="storeHealth">One per store connection, shared by every limiter using that store; each limiter must be disposed, because the shared live-partition count only falls on disposal.</param>
     /// <param name="timeProvider">Defaults to <see cref="TimeProvider.System"/>.</param>
+    /// <exception cref="ArgumentNullException"><paramref name="primary"/>, <paramref name="options"/>, or <paramref name="storeHealth"/> is <see langword="null"/>; or <paramref name="fallback"/> is <see langword="null"/> while <paramref name="options"/>'s <see cref="ResilientRateLimiterOptions.FailureBehavior"/> is <see cref="StoreFailureBehavior.LocalFallback"/>.</exception>
+    /// <exception cref="InvalidOperationException"><paramref name="options"/> is incomplete or contradictory. See <see cref="ResilientRateLimiterOptions.Validate"/> for the rules that are checked.</exception>
     public ResilientRateLimiter(
         RateLimiter primary,
         RateLimiter? fallback,
@@ -79,12 +89,21 @@ public sealed class ResilientRateLimiter : RateLimiter
     }
 
     /// <summary>Always <see langword="null"/>: the decorator keeps no counters of its own, and the store limiter answers for the shared state.</summary>
+    /// <returns>Always <see langword="null"/>.</returns>
     public override RateLimiterStatistics? GetStatistics() => null;
 
     /// <summary>Always rejects, carrying no source tag: no store was consulted, so no path decided. The middleware calls the async path next.</summary>
+    /// <param name="permitCount">Ignored.</param>
+    /// <returns>A rejected lease.</returns>
     protected override RateLimitLease AttemptAcquireCore(int permitCount) => StaticLease.Rejected;
 
-    /// <inheritdoc />
+    /// <summary>Asks the store limiter first. If it is slow, unreachable, or its breaker is open, this takes the fallback path this instance was configured with instead of letting the failure reach the caller.</summary>
+    /// <param name="permitCount">How many permits this request needs.</param>
+    /// <param name="cancellationToken">Cancels the wait for the store. Cancelling this token is never treated as a store failure, so the fallback path is not used; the cancellation reaches the caller instead.</param>
+    /// <returns>A <see cref="ResilientRateLimitLease"/> tagged with the <see cref="LeaseSource"/> of whichever path answered.</returns>
+    /// <exception cref="ArgumentException">The store limiter or the fallback limiter rejected <paramref name="permitCount"/>, and this was not classified as a store failure.</exception>
+    /// <exception cref="ObjectDisposedException">The store limiter or the fallback limiter has already been disposed, and this was not classified as a store failure.</exception>
+    /// <exception cref="InvalidOperationException">The store limiter or the fallback limiter threw <see cref="InvalidOperationException"/>, and this was not classified as a store failure.</exception>
     protected override async ValueTask<RateLimitLease> AcquireAsyncCore(int permitCount, CancellationToken cancellationToken)
     {
         Interlocked.Increment(ref _inFlight);
@@ -157,7 +176,8 @@ public sealed class ResilientRateLimiter : RateLimiter
         }
     }
 
-    /// <inheritdoc />
+    /// <summary>Disposes the primary limiter and, if one was supplied, the fallback limiter. Disposing this wrapper is the only disposal a caller needs to do; do not dispose the primary or fallback limiter separately.</summary>
+    /// <param name="disposing"><see langword="true"/> when called from <see cref="IDisposable.Dispose"/> rather than a finalizer.</param>
     protected override void Dispose(bool disposing)
     {
         if (!disposing)
@@ -171,7 +191,8 @@ public sealed class ResilientRateLimiter : RateLimiter
         _mirror?.Dispose();
     }
 
-    /// <inheritdoc />
+    /// <summary>Disposes the primary limiter and, if one was supplied, the fallback limiter, asynchronously.</summary>
+    /// <returns>A task that completes once both are disposed.</returns>
     protected override async ValueTask DisposeAsyncCore()
     {
         ReleasePartition();

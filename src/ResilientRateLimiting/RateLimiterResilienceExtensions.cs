@@ -12,6 +12,16 @@ public static class RateLimiterResilienceExtensions
     /// <param name="storeHealth">One per store connection, shared by every partition — never one per partition.</param>
     /// <param name="timeProvider">Defaults to <see cref="TimeProvider.System"/>.</param>
     /// <returns>A limiter that can be used anywhere the original could.</returns>
+    /// <exception cref="ArgumentNullException"><paramref name="primary"/>, <paramref name="options"/>, or <paramref name="storeHealth"/> is <see langword="null"/>; or <paramref name="fallback"/> is <see langword="null"/> while <paramref name="options"/> needs a local fallback.</exception>
+    /// <exception cref="InvalidOperationException"><paramref name="options"/> is incomplete or contradictory.</exception>
+    /// <example>
+    /// <code>
+    /// RateLimiter limiter = storeLimiter.WithResilience(
+    ///     fallback: new FixedWindowRateLimiter(fallbackOptions),
+    ///     options: new ResilientRateLimiterOptions { FallbackRecoveryTime = TimeSpan.FromMinutes(1) },
+    ///     storeHealth: storeHealth);
+    /// </code>
+    /// </example>
     public static RateLimiter WithResilience(
         this RateLimiter primary,
         RateLimiter? fallback,

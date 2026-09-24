@@ -1,6 +1,7 @@
 namespace ResilientRateLimiting;
 
 /// <summary>Which path produced a lease.</summary>
+/// <remarks>Read this from a lease with <see cref="ResilientRateLimitLease.SourceMetadata"/>.</remarks>
 public enum LeaseSource
 {
     /// <summary>The shared store answered.</summary>
@@ -15,6 +16,6 @@ public enum LeaseSource
     /// <summary>The store failed and the configured behaviour was to reject the request.</summary>
     FailClosed,
 
-    /// <summary>The store answered after a recent outage and the local counter refused before the store was asked.</summary>
+    /// <summary>The store recently answered again after an outage, and this request was refused by the local counter before the store was asked, so a burst of retries right after recovery does not overwhelm the store.</summary>
     Recovery,
 }

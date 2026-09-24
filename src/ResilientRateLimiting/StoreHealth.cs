@@ -17,6 +17,8 @@ public sealed class StoreHealth
 
     /// <param name="options">Configuration for this store connection, validated here so a wrong setup fails at startup.</param>
     /// <param name="timeProvider">Defaults to <see cref="TimeProvider.System"/>.</param>
+    /// <exception cref="ArgumentNullException"><paramref name="options"/> is <see langword="null"/>.</exception>
+    /// <exception cref="InvalidOperationException"><paramref name="options"/> is incomplete or contradictory. See <see cref="StoreHealthOptions.Validate"/> for the rules that are checked.</exception>
     public StoreHealth(StoreHealthOptions options, TimeProvider? timeProvider = null)
     {
         ArgumentNullException.ThrowIfNull(options);

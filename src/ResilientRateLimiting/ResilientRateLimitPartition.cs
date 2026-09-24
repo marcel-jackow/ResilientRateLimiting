@@ -14,6 +14,18 @@ public static class ResilientRateLimitPartition
     /// <param name="storeHealth">One per store connection, shared by every partition — never one per partition.</param>
     /// <param name="timeProvider">Defaults to <see cref="TimeProvider.System"/>.</param>
     /// <returns>A partition usable with <c>PartitionedRateLimiter.Create</c> or an ASP.NET Core policy.</returns>
+    /// <exception cref="ArgumentNullException"><paramref name="primaryFactory"/>, <paramref name="options"/>, or <paramref name="storeHealth"/> is <see langword="null"/>.</exception>
+    /// <example>
+    /// <code>
+    /// var limiter = PartitionedRateLimiter.Create&lt;HttpContext, string&gt;(context =>
+    ///     ResilientRateLimitPartition.Get(
+    ///         partitionKey: context.User.Identity?.Name ?? "anonymous",
+    ///         primaryFactory: key => new RedisFixedWindowRateLimiter(key, storeWindowOptions),
+    ///         fallbackFactory: key => new FixedWindowRateLimiter(fallbackOptions),
+    ///         options: resilienceOptions,
+    ///         storeHealth: storeHealth));
+    /// </code>
+    /// </example>
     public static RateLimitPartition<TKey> Get<TKey>(
         TKey partitionKey,
         Func<TKey, RateLimiter> primaryFactory,
