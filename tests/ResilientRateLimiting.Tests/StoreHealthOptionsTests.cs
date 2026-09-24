@@ -12,6 +12,12 @@ public class StoreHealthOptionsTests
         Valid().Validate();
     }
 
+    [Fact]
+    public void Failure_ratio_defaults_to_half()
+    {
+        Assert.Equal(0.5, new StoreHealthOptions().FailureRatio);
+    }
+
     [Theory]
     [InlineData(0)]
     [InlineData(-1)]

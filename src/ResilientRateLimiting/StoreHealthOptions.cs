@@ -12,8 +12,8 @@ public sealed record StoreHealthOptions
     /// <summary>Store calls needed within <see cref="BreakerSamplingDuration"/> before the breaker may open, and only then if the failed share reaches <see cref="FailureRatio"/>. Minimum 2.</summary>
     public int FailuresBeforeOpen { get; init; } = 5;
 
-    /// <summary>The share of store calls within <see cref="BreakerSamplingDuration"/> that must fail before the breaker opens.</summary>
-    public double FailureRatio { get; init; } = 1.0;
+    /// <summary>The share of store calls within <see cref="BreakerSamplingDuration"/> that must fail before the breaker opens. Default 0.5: the breaker opens once at least half of the calls failed.</summary>
+    public double FailureRatio { get; init; } = 0.5;
 
     /// <summary>How long the breaker stays open before it probes the store again.</summary>
     public TimeSpan BreakDuration { get; init; } = TimeSpan.FromSeconds(5);

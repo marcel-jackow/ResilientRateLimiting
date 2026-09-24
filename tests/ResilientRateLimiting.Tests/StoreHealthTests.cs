@@ -133,16 +133,60 @@ public class StoreHealthTests
     }
 
     [Fact]
-    public async Task Keeps_the_breaker_closed_when_one_success_dilutes_the_default_ratio()
+    public async Task Keeps_the_breaker_closed_while_fewer_than_half_of_the_calls_fail()
     {
         var clock = new FakeTimeProvider();
-        var options = Options();
-        var storeOptions = StoreOptions();
+        var health = new StoreHealth(StoreOptions(), clock);
+        using var primary = new FakeRateLimiter(permitLimit: 100);
+        using var fallback = new FakeRateLimiter(permitLimit: 100);
+        using var limiter = new ResilientRateLimiter(primary, fallback, Options(), health, clock);
+
+        // Two successes and one failure: a third of the calls failed, below the default half.
+        (await limiter.AcquireAsync(1, TestContext.Current.CancellationToken)).Dispose();
+        (await limiter.AcquireAsync(1, TestContext.Current.CancellationToken)).Dispose();
+        primary.AlwaysFail(new InvalidDataException("store down"));
+        (await limiter.AcquireAsync(1, TestContext.Current.CancellationToken)).Dispose();
+
+        var attemptsBefore = primary.AcquireAttempts;
+        (await limiter.AcquireAsync(1, TestContext.Current.CancellationToken)).Dispose();
+
+        Assert.Equal(attemptsBefore + 1, primary.AcquireAttempts);
+    }
+
+    [Fact]
+    public async Task Opens_the_breaker_when_exactly_half_of_the_calls_fail()
+    {
+        var clock = new FakeTimeProvider();
+        var health = new StoreHealth(StoreOptions(), clock);
+        using var primary = new FakeRateLimiter(permitLimit: 100);
+        using var fallback = new FakeRateLimiter(permitLimit: 100);
+        using var limiter = new ResilientRateLimiter(primary, fallback, Options(), health, clock);
+
+        // Two successes then two failures: exactly half of the calls failed.
+        (await limiter.AcquireAsync(1, TestContext.Current.CancellationToken)).Dispose();
+        (await limiter.AcquireAsync(1, TestContext.Current.CancellationToken)).Dispose();
+        primary.AlwaysFail(new InvalidDataException("store down"));
+        (await limiter.AcquireAsync(1, TestContext.Current.CancellationToken)).Dispose();
+        (await limiter.AcquireAsync(1, TestContext.Current.CancellationToken)).Dispose();
+
+        var attemptsWhenOpened = primary.AcquireAttempts;
+        using var afterBreak = await limiter.AcquireAsync(1, TestContext.Current.CancellationToken);
+
+        Assert.Equal(LeaseSource.LocalFallback, SourceOf(afterBreak));
+        Assert.Equal(attemptsWhenOpened, primary.AcquireAttempts);
+    }
+
+    [Fact]
+    public async Task Keeps_the_breaker_closed_on_a_partial_outage_when_the_ratio_is_one()
+    {
+        var clock = new FakeTimeProvider();
+        var storeOptions = StoreOptions() with { FailureRatio = 1.0 };
         var health = new StoreHealth(storeOptions, clock);
         using var primary = new FakeRateLimiter(permitLimit: 100);
         using var fallback = new FakeRateLimiter(permitLimit: 100);
-        using var limiter = new ResilientRateLimiter(primary, fallback, options, health, clock);
+        using var limiter = new ResilientRateLimiter(primary, fallback, Options(), health, clock);
 
+        // One success among the failures is enough to keep a ratio of one from being reached.
         (await limiter.AcquireAsync(1, TestContext.Current.CancellationToken)).Dispose();
         primary.AlwaysFail(new InvalidDataException("store down"));
 
@@ -151,10 +195,10 @@ public class StoreHealthTests
             (await limiter.AcquireAsync(1, TestContext.Current.CancellationToken)).Dispose();
         }
 
-        var attemptsAfterFailures = primary.AcquireAttempts;
+        var attemptsBefore = primary.AcquireAttempts;
         (await limiter.AcquireAsync(1, TestContext.Current.CancellationToken)).Dispose();
 
-        Assert.Equal(attemptsAfterFailures + 1, primary.AcquireAttempts);
+        Assert.Equal(attemptsBefore + 1, primary.AcquireAttempts);
     }
 
     [Fact]
