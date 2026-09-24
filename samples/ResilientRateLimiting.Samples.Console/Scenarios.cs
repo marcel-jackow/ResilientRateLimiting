@@ -579,4 +579,24 @@ internal static class Scenarios
         using var lease = await limiter.AcquireAsync(1);
         Console.WriteLine($"Allowed: {lease.IsAcquired}");
     }
+
+    public static Task CustomLease()
+    {
+        // snippet: custom-lease
+        using var innerLimiter = new FixedWindowRateLimiter(new FixedWindowRateLimiterOptions
+        {
+            PermitLimit = 1,
+            Window = TimeSpan.FromMinutes(1),
+            QueueLimit = 0,
+        });
+
+        using var first = innerLimiter.AttemptAcquire(1);
+        using var rejected = new ResilientRateLimitLease(innerLimiter.AttemptAcquire(1), LeaseSource.LocalFallback, retryAfter: TimeSpan.FromSeconds(30));
+
+        rejected.TryGetMetadata(MetadataName.RetryAfter, out var retryAfter);
+        Console.WriteLine($"Source: {rejected.Source}, allowed: {rejected.IsAcquired}, retry after: {retryAfter}");
+        // end-snippet
+
+        return Task.CompletedTask;
+    }
 }

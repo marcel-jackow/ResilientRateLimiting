@@ -6,6 +6,17 @@ You do not need to know rate limiting to read it, but it moves fast. If a word i
 
 A note on numbers: every default value on this page is a **starting point**, not a measured best value, unless it says **measured** and links to [measurements.md](measurements.md). [04-configuration.md](04-configuration.md) explains why each default was chosen and when to change it.
 
+## Contents
+
+- [Packages and namespaces](#packages-and-namespaces) — which type is in which package
+- [Wrapping a limiter](#wrapping-a-limiter) — `ResilientRateLimiter`, `WithResilience`, `ResilientRateLimitPartition.Get`
+- [Store connection](#store-connection) — `StoreHealth`, `StoreHealthOptions`
+- [Per-limiter settings](#per-limiter-settings) — `ResilientRateLimiterOptions`, `FallbackRecoveryTime`, `StoreFailureBehavior`
+- [Sizing](#sizing) — `LocalBudget.ForReplicas`
+- [Reading results](#reading-results) — `ResilientRateLimitLease`, `LeaseSource`
+- [ASP.NET Core](#aspnet-core) — `UseResilientDefaults`, `AddResilientRateLimiting`, `WithLogging`
+- [Exceptions you may see](#exceptions-you-may-see) — every exception, its cause and its fix
+
 ## Packages and namespaces
 
 **The problem.** The library comes as two NuGet packages. A console app or a worker service does not need ASP.NET Core, and should not have to reference it.
@@ -910,5 +921,375 @@ From `samples/ResilientRateLimiting.Samples.Console/Scenarios.cs`
 - **Expecting recovery mode with `FailOpen` or `FailClosed`.** It exists only with `LocalFallback`, because only then is there a local count to check.
 
 **See also.** [`ResilientRateLimiterOptions`](#limiter-options), [`AcquireAsync`](#acquireasync).
+
+<a id="sizing"></a>
+## Sizing
+
+**The problem.** During an outage each [replica](01-concepts.md#replica) limits on its own, with its local fallback limiter. The shared limit (for example 100 requests per minute for all replicas together) must be split between them.
+
+**What goes wrong without a rule.** If every replica's fallback allows the full shared limit, three replicas together allow three times the limit during an outage. If you type a fixed share by hand, it is right on the day you write it and wrong after the next change to the replica count.
+
+**What the library does.** It gives you one small method that computes the share. It cannot apply it for you, because you build the fallback limiter yourself.
+
+<a id="localbudget-forreplicas"></a>
+### `LocalBudget.ForReplicas(sharedPermitLimit, replicaCount)`
+
+**What it is.** `public static int ForReplicas(int sharedPermitLimit, int replicaCount)`. It returns the [local budget](01-concepts.md#local-budget): the shared limit divided by the number of replicas, rounded up to a whole number. It is arithmetic only.
+
+**When you use it.** Every time you build a fallback limiter, to set its `PermitLimit` (or `TokenLimit` for a token bucket).
+
+**Parameters.**
+
+| Name | Type | Required | Default | Meaning | Valid values |
+|---|---|---|---|---|---|
+| `sharedPermitLimit` | `int` | yes | — | The limit enforced across every replica together. | 1 or more. |
+| `replicaCount` | `int` | yes | — | The number of replicas you **typically** run. | 1 or more. |
+
+**Returns.** `sharedPermitLimit ÷ replicaCount`, rounded up. For 100 and 3 it returns 34.
+
+**Rounding up.** 100 ÷ 3 is 33.33. Rounding down would give 33, and three replicas would then allow only 99 in total, less than the limit you promised. Rounding up gives 34, so the total is 102: at most one permit per replica above the limit, never below it.
+
+**Typical, not maximum, replica count.** Suppose you usually run 3 replicas and can scale to 10. With 10, each replica gets 10 permits, and during an outage your 3 replicas allow only 30 of the 100 you promised: good clients are refused. With 3, each replica gets 34. If you run 10 replicas at the moment of an outage, the total can reach 340 for as long as the outage lasts. That overshoot is the price of not refusing good traffic in the normal case; choose the typical count unless overshoot is worse for you than refusals.
+
+**Throws.**
+
+| Exception | Exact cause |
+|---|---|
+| `ArgumentOutOfRangeException` | `sharedPermitLimit` or `replicaCount` is below 1. |
+
+**Example.**
+
+<!-- snippet: local-budget -->
+```csharp
+var localLimit = LocalBudget.ForReplicas(sharedPermitLimit: 100, replicaCount: 3);
+
+using var fallback = new FixedWindowRateLimiter(new FixedWindowRateLimiterOptions
+{
+    PermitLimit = localLimit,
+    Window = TimeSpan.FromMinutes(1),
+    QueueLimit = 0,
+});
+```
+
+From `samples/ResilientRateLimiting.Samples.Console/Scenarios.cs`
+
+(This fallback is disposed by its own `using` because the sample never hands it to a wrapper. A fallback you pass to a wrapper must not have a `using`.)
+
+**Common mistakes.**
+
+- **A literal number instead of this method.** The fallback slowly drifts out of proportion as replicas are added or removed, and nothing tells you.
+- **A replica count of 0 from configuration** that was never set: the method throws at startup, which is better than a fallback of unlimited size.
+- **Using the result for the store limiter.** The store limiter keeps the full shared limit; only the fallback gets the share.
+
+**See also.** [The local budget](01-concepts.md#the-local-budget), [04-configuration.md](04-configuration.md).
+
+<a id="reading-results"></a>
+## Reading results
+
+**The problem.** A rejected request looks the same whether the shared store rejected it or a local fallback did during an outage. An allowed request looks the same whether the store counted it or the library let it through because the store was down.
+
+**What goes wrong without this information.** You cannot tell from logs, metrics or a response whether your service is running on its real limits, and you cannot give a caller a useful time to retry.
+
+**What the library does.** Every lease from `AcquireAsync` is a `ResilientRateLimitLease`. It carries a [source tag](01-concepts.md#source-tag) (a `LeaseSource` value) and, on a rejection, usually a [Retry-After](01-concepts.md#retry-after-header) value, both as lease [metadata](01-concepts.md#metadata): named extra values a lease can carry.
+
+<a id="resilientratelimitlease"></a>
+### `ResilientRateLimitLease` (class)
+
+**What it is.** `public sealed class ResilientRateLimitLease : RateLimitLease`. A decorator around the lease that the answering limiter produced (the inner lease). It adds the source tag, can replace the Retry-After value, and passes everything else through: `IsAcquired` and every other metadata name come from the inner lease.
+
+**When you use it.** You read it on every lease you get from a `ResilientRateLimiter`. You create one yourself only when you write your own decorator around a limiter, or a test double.
+
+**Members.**
+
+| Member | What it does |
+|---|---|
+| `IsAcquired` | The inner lease's answer. |
+| `Source` | The `LeaseSource` of this lease (see below). Use it when you hold the concrete type. |
+| `SourceMetadata` | `public static readonly MetadataName<LeaseSource>`, named `"ResilientRateLimiting.Source"`. The metadata key for the source; use it when you hold a plain `RateLimitLease`, as the ASP.NET Core middleware does. |
+| `MetadataNames` | The inner lease's names, plus `"ResilientRateLimiting.Source"`, plus the standard `MetadataName.RetryAfter` name when this lease has its own Retry-After value that the inner lease does not already list. |
+| `TryGetMetadata(name, out value)` | Answers the source and this lease's own Retry-After itself; passes every other name to the inner lease. |
+| `Dispose()` | Disposes the inner lease. |
+
+**Where the Retry-After value comes from.** On a rejection, the library first uses the answering limiter's own `MetadataName.RetryAfter` value, and adds a [random spread](01-concepts.md#random-spread) (and, while the store is failing, a longer wait), capped by `MaxAddedRetryDelay`. Only when the answering limiter gives no value, and the store has failed, does it estimate one from `FallbackRecoveryTime` (or `BreakDuration`). The result replaces the inner lease's own value. Two cases give **no** Retry-After:
+
+- an allowed lease;
+- a rejection by a healthy store that gave no value. `RedisRateLimiting` limiters give no value under the standard name (**measured**, see [measurements.md](measurements.md#redisratelimiting-and-the-retry-after-value)), so a normal rejection by Redis carries no Retry-After.
+
+<a id="lease-constructor"></a>
+### `new ResilientRateLimitLease(inner, source, retryAfter = null)`
+
+**What it is.** `public ResilientRateLimitLease(RateLimitLease inner, LeaseSource source, TimeSpan? retryAfter = null)`.
+
+**When you use it.** In your own decorator or test code, to produce a lease that looks exactly like one from the library, so that code reading the source tag (for example `UseResilientDefaults`) can be tested.
+
+**Parameters.**
+
+| Name | Type | Required | Default | Meaning | Valid values |
+|---|---|---|---|---|---|
+| `inner` | `RateLimitLease` | yes | — | The lease the answering limiter produced. The new lease owns it and disposes it. | Not `null`. |
+| `source` | `LeaseSource` | yes | — | Which path answered. | Any `LeaseSource` value. |
+| `retryAfter` | `TimeSpan?` | no | `null` | When given, replaces the inner lease's own Retry-After value. When `null`, the inner value (if any) is passed through. | Any value, or `null`. |
+
+**Throws.** `ArgumentNullException` when `inner` is `null`.
+
+**Example.** The inner fixed-window lease has its own Retry-After (the time to its next window); the 30 seconds given here replace it:
+
+<!-- snippet: custom-lease -->
+```csharp
+using var innerLimiter = new FixedWindowRateLimiter(new FixedWindowRateLimiterOptions
+{
+    PermitLimit = 1,
+    Window = TimeSpan.FromMinutes(1),
+    QueueLimit = 0,
+});
+
+using var first = innerLimiter.AttemptAcquire(1);
+using var rejected = new ResilientRateLimitLease(innerLimiter.AttemptAcquire(1), LeaseSource.LocalFallback, retryAfter: TimeSpan.FromSeconds(30));
+
+rejected.TryGetMetadata(MetadataName.RetryAfter, out var retryAfter);
+Console.WriteLine($"Source: {rejected.Source}, allowed: {rejected.IsAcquired}, retry after: {retryAfter}");
+```
+
+From `samples/ResilientRateLimiting.Samples.Console/Scenarios.cs`
+
+It prints `Source: LocalFallback, allowed: False, retry after: 00:00:30`.
+
+Reading the Retry-After of a real lease:
+
+<!-- snippet: read-retry-after -->
+```csharp
+var hasRetryAfter = lease.TryGetMetadata(MetadataName.RetryAfter, out var retryAfter);
+
+Console.WriteLine(hasRetryAfter ? $"Retry after: {retryAfter}" : "No Retry-After hint.");
+```
+
+From `samples/ResilientRateLimiting.Samples.Console/Scenarios.cs`
+
+**Common mistakes.**
+
+- **Disposing the inner lease yourself** as well as the wrapper lease. The wrapper lease already disposes it.
+- **Expecting a Retry-After on every rejection.** A healthy Redis limiter gives none; check the return value of `TryGetMetadata`.
+- **Wrapping a lease that is already a `ResilientRateLimitLease`.** The outer source tag hides the inner one, the same problem as nesting wrappers.
+
+<a id="leasesource"></a>
+### `LeaseSource` (enum)
+
+**What it is.** `public enum LeaseSource`. Which path produced a lease. Read it with `lease.TryGetMetadata(ResilientRateLimitLease.SourceMetadata, out var source)`, or from `ResilientRateLimitLease.Source`. The same value is the `source` tag on the lease metric (in snake case, for example `local_fallback`; see [05-telemetry.md](05-telemetry.md)).
+
+**Values.**
+
+| Value | When it happens | Allowed or rejected | What a caller should do |
+|---|---|---|---|
+| `Distributed` | The shared store answered in time. The normal case. | either | Nothing special. A rejection is a real limit; Retry-After is present only if the store gave one. |
+| `LocalFallback` | The store failed (error, timeout or open breaker), `FailureBehavior` is `LocalFallback`, and the local fallback limiter answered. | either | Treat it as a normal answer. Many of these in a row mean an outage: alert on the metric. |
+| `FailOpen` | The store failed and `FailureBehavior` is `FailOpen`. | always allowed | Nothing. Know that no limit applied to this request. |
+| `FailClosed` | The store failed and `FailureBehavior` is `FailClosed`. | always rejected | Retry after the Retry-After time. The request was refused because the store is down, not because the client used too much. |
+| `Recovery` | The store answered again after an outage a short time ago ([recovery mode](01-concepts.md#recovery-mode)), and the local counter refused the request before the store was asked. Only with `LocalFallback`. | always rejected | Retry after the Retry-After time. The client used its share during the outage. |
+
+A lease from `AttemptAcquire` has no source at all (see [`AttemptAcquire`](#attemptacquire)).
+
+**Example.** The [`AcquireAsync`](#acquireasync) entry shows a `switch` over every value (`read-source`).
+
+**Common mistakes.**
+
+- **Reading a missing source as `Distributed`.** `TryGetMetadata` returns `false` for a lease with no source; `out var source` is then the default value of the enum, which is `Distributed`. Check the return value.
+- **Alerting on single `LocalFallback` leases.** One slow store call gives one; alert on a rate over time.
+
+<a id="aspnet-core"></a>
+## ASP.NET Core
+
+**The problem.** ASP.NET Core has its own rate limiting middleware (`AddRateLimiter` and `app.UseRateLimiter()`). By default it answers a rejected request with status 503 (Service Unavailable) and writes no `Retry-After` header. It also knows nothing about one shared `StoreHealth`.
+
+**What goes wrong without help.** Clients read 503 as "the server is broken", not "you sent too much", and retry at once, because nothing told them when to come back. Each policy may create its own `StoreHealth`, which breaks the breaker (see [`StoreHealth`](#storehealth)).
+
+**What the library does.** The `ResilientRateLimiting.AspNetCore` package adds three extension methods: one to answer rejections correctly, one to register the single `StoreHealth` with configuration and logging, and one to add logging to a hand-built `StoreHealthOptions`.
+
+<a id="useresilientdefaults"></a>
+### `RateLimiterOptions.UseResilientDefaults(emitDegradedHeader = null)`
+
+**What it is.** `public static RateLimiterOptions UseResilientDefaults(this RateLimiterOptions options, Func<HttpContext, bool>? emitDegradedHeader = null)`. It sets two things on the middleware options:
+
+- `RejectionStatusCode` to **429** (Too Many Requests);
+- `OnRejected` to a callback that writes the response headers below.
+
+It does not touch any policy.
+
+**Headers written on a rejection.**
+
+| Header | When | Format |
+|---|---|---|
+| `Retry-After` | The lease has a `MetadataName.RetryAfter` value. | Whole seconds, rounded up (a 1.2-second wait becomes `2`), never negative, at most `int.MaxValue`, written with invariant digits. |
+| `X-RateLimit-Degraded: true` | `emitDegradedHeader` is given, the lease has a source other than `Distributed`, and the predicate returns `true` for this request. | The literal value `true`. |
+
+**When you use it.** Once, inside `AddRateLimiter`, in every web app that uses this library.
+
+**Parameters.**
+
+| Name | Type | Required | Default | Meaning | Valid values |
+|---|---|---|---|---|---|
+| `options` | `RateLimiterOptions` | yes | — | The middleware options (the `this` argument). | Not `null`. |
+| `emitDegradedHeader` | `Func<HttpContext, bool>?` | no | `null` | Decides per rejected request whether to tell this caller that limiting runs on local state. Asked only for rejected requests whose lease is not `Distributed`. | Any predicate, or `null`. |
+
+**Returns.** The same `options`, so you can chain calls. **Throws.** `ArgumentNullException` when `options` is `null`.
+
+**Variation: `emitDegradedHeader` left out (`null`).** Write `limiterOptions.UseResilientDefaults();`. You get 429 and `Retry-After`, and the degraded header is never sent. This is the right choice for public clients: whether your store is down is internal information.
+
+**Variation: with a predicate.** Send the degraded header only to callers you trust, here requests from the same machine:
+
+<!-- snippet: web-degraded-header -->
+```csharp
+limiterOptions.UseResilientDefaults(emitDegradedHeader: context =>
+    context.Connection.RemoteIpAddress is { } remoteIp && IPAddress.IsLoopback(remoteIp));
+```
+
+From `samples/ResilientRateLimiting.Samples.Web/Program.cs`
+
+**Common mistakes.**
+
+- **Setting your own `OnRejected` after this call, or calling this twice.** There is only one `OnRejected`; the last assignment wins and the earlier callback is lost without a message. If you need extra work on rejection, set `OnRejected` yourself and write the headers there.
+- **Setting `OnRejected` before this call.** This call replaces it.
+- **Expecting a `Retry-After` header for every 429.** A rejection by a healthy Redis limiter carries no value, so no header (see [`ResilientRateLimitLease`](#resilientratelimitlease)).
+- **A predicate that returns `true` for everyone.** It tells every client, including attackers, when your store is down.
+
+**See also.** [Retry-After](01-concepts.md#retry-after), [`LeaseSource`](#leasesource).
+
+<a id="addresilientratelimiting"></a>
+### `IServiceCollection.AddResilientRateLimiting(storeHealthSection, configure = null)`
+
+**What it is.** `public static IServiceCollection AddResilientRateLimiting(this IServiceCollection services, IConfiguration storeHealthSection, Func<StoreHealthOptions, StoreHealthOptions>? configure = null)`. It registers one singleton `StoreHealth` for your store connection, in four steps:
+
+1. binds `StoreHealthOptions` from `storeHealthSection` (the `appsettings.json` form is in [04-configuration.md](04-configuration.md));
+2. runs `configure` on the bound options, if given;
+3. adds logging with [`WithLogging`](#withlogging), under the logger category `"ResilientRateLimiting.StoreHealth"`;
+4. builds the `StoreHealth` with the `TimeProvider` registered in dependency injection, or `TimeProvider.System` if none is registered.
+
+Steps 2 to 4 run when the `StoreHealth` is first resolved, not when this method is called.
+
+**When you use it.** Once per application, for the store connection your policies share. In a policy, get the instance with `context.RequestServices.GetRequiredService<StoreHealth>()`. It registers only the `StoreHealth`; build your `ResilientRateLimiterOptions` once at startup and capture them in each policy.
+
+**Parameters.**
+
+| Name | Type | Required | Default | Meaning | Valid values |
+|---|---|---|---|---|---|
+| `services` | `IServiceCollection` | yes | — | The service collection (the `this` argument). | Not `null`; this method not called on it before. |
+| `storeHealthSection` | `IConfiguration` | yes | — | The configuration section for this store connection. | Not `null`. Missing keys keep their defaults. |
+| `configure` | `Func<StoreHealthOptions, StoreHealthOptions>?` | no | `null` | Changes the bound options, for the settings configuration cannot hold: `ShouldHandle` and `OnStoreFailure`. Return a copy made with `with`. | Any function, or `null`. |
+
+**Returns.** The same `services`, for chaining.
+
+**Throws.**
+
+| Exception | When | Exact cause |
+|---|---|---|
+| `ArgumentNullException` | at the call | `services` or `storeHealthSection` is `null`. |
+| `InvalidOperationException` | at the call | This method was already called on the same `services` (a `StoreHealth` is already registered). |
+| `OptionsValidationException` | at application startup | The values bound from configuration fail `StoreHealthOptions.Validate()`. The message holds the rule lines. |
+| `InvalidOperationException` | at first resolution of `StoreHealth` (normally the first request that uses a policy) | The options returned by `configure` fail `Validate()`. Startup validation only sees the bound values, not the result of `configure`. |
+
+**Variation: `configure` left out.** Write `builder.Services.AddResilientRateLimiting(builder.Configuration.GetSection("ResilientRateLimiting:Store"));`. The options come only from configuration, with logging added. With `ShouldHandle` left `null`, the default classification applies (see [`StoreHealthOptions`](#storehealthoptions)).
+
+**Variation: `configure` given.** Here it names the store's own exceptions and adds a callback:
+
+<!-- snippet: web-configure -->
+```csharp
+StoreHealthOptions Configure(StoreHealthOptions options) => options with
+{
+    // The library's own timeout and breaker always count as store failures, so this only names the store's own exceptions.
+    ShouldHandle = exception => exception is RedisException,
+    OnStoreFailure = exception => Console.WriteLine($"Store failure: {exception.GetType().Name}"),
+};
+```
+
+From `samples/ResilientRateLimiting.Samples.Web/Program.cs`
+
+<!-- snippet: web-services -->
+```csharp
+builder.Services.AddSingleton(redis);
+builder.Services.AddResilientRateLimiting(
+    builder.Configuration.GetSection("ResilientRateLimiting:Store"),
+    Configure);
+```
+
+From `samples/ResilientRateLimiting.Samples.Web/Program.cs`
+
+Your `OnStoreFailure` still runs: logging is added after `configure`, and `WithLogging` keeps an existing callback.
+
+**Common mistakes.**
+
+- **Calling it twice for two store connections.** The second call throws. Build the second connection's `StoreHealth` by hand (see [`WithLogging`](#withlogging)).
+- **Registering the hand-built second `StoreHealth` as another unkeyed service.** Dependency injection returns the last registration, so every policy, including the first store's, would get the second store's health. Capture it in the one policy that needs it.
+- **Making the options invalid in `configure`.** Startup does not catch it; the first request that uses a policy does. Test `configure` or call `Validate()` on its result.
+- **Calling `WithLogging` inside `configure`.** Logging is added for you; you would log each failure twice.
+
+**See also.** [`StoreHealth`](#storehealth), [04-configuration.md](04-configuration.md), [05-telemetry.md](05-telemetry.md).
+
+<a id="withlogging"></a>
+### `StoreHealthOptions.WithLogging(logger)`
+
+**What it is.** `public static StoreHealthOptions WithLogging(this StoreHealthOptions options, ILogger logger)`. It returns a **copy** of the options whose `OnStoreFailure` writes a log entry at `Warning` level and then calls the callback that was already set, if any. The original options do not change.
+
+The message is `Store call failed: {ExceptionType}`, with only the exception's type name in the text. The exception itself is passed to the logger too, so a provider that shows exception details will show them. Entries follow the `OnStoreFailure` repeat rules: the first failure of each exception type, and again after that type was quiet for `BreakerSamplingDuration` or after the breaker closed.
+
+**When you use it.** For a `StoreHealth` you build by hand, typically for a second store connection. `AddResilientRateLimiting` already calls it for its own connection.
+
+**Parameters.**
+
+| Name | Type | Required | Default | Meaning | Valid values |
+|---|---|---|---|---|---|
+| `options` | `StoreHealthOptions` | yes | — | The options to copy (the `this` argument). | Not `null`. |
+| `logger` | `ILogger` | yes | — | Receives the warnings. | Not `null`. |
+
+**Returns.** A new `StoreHealthOptions` with the combined callback.
+
+**Throws.** `ArgumentNullException` when `options` or `logger` is `null`.
+
+**Example.** A second store connection with its own hand-built `StoreHealth`:
+
+<!-- snippet: web-with-logging -->
+```csharp
+// A second store connection: built by hand, so its StoreHealth is built by hand too, with logging attached manually.
+var secondaryRedisConnectionString = builder.Configuration.GetConnectionString("RedisSecondary")
+    ?? throw new InvalidOperationException("The ConnectionStrings:RedisSecondary configuration value is missing.");
+
+var secondaryRedisOptions = ConfigurationOptions.Parse(secondaryRedisConnectionString);
+secondaryRedisOptions.AsyncTimeout = 20;
+
+var secondaryRedis = await ConnectionMultiplexer.ConnectAsync(secondaryRedisOptions);
+var secondaryLogger = LoggerFactory.Create(logging => logging.AddConsole())
+    .CreateLogger("ResilientRateLimiting.SecondStore");
+
+var secondaryStoreHealth = new StoreHealth(new StoreHealthOptions().WithLogging(secondaryLogger));
+```
+
+From `samples/ResilientRateLimiting.Samples.Web/Program.cs`
+
+(`AsyncTimeout = 20` is the Redis client's timeout in milliseconds, kept at or below the 20 ms `StoreTimeout` default, a **starting point**; see [06-production.md](06-production.md).)
+
+**Common mistakes.**
+
+- **Calling it twice on the same options.** The callback is wrapped twice, so every failure is logged twice.
+- **Ignoring the return value.** `options.WithLogging(logger);` alone changes nothing; pass the returned copy to `StoreHealth`.
+
+**See also.** [`AddResilientRateLimiting`](#addresilientratelimiting), [`StoreHealthOptions`](#storehealthoptions).
+
+## Exceptions you may see
+
+"Reaches the caller" means the exception comes out of your call; the library does not turn it into a fallback answer.
+
+| Exception | Thrown by | Cause | Fix |
+|---|---|---|---|
+| `ArgumentOutOfRangeException` | `AcquireAsync(n)`, from the primary limiter | `n` is above the store limiter's own limit. `RedisRateLimiting` limiters throw this instead of returning a rejected lease. It is an `ArgumentException`, so it reaches the caller and does not start the fallback. | Check `n` against the limit before you call (see [`AcquireAsync`](#acquireasync)). Do **not** make `ShouldHandle` treat it as a store failure: `ShouldHandle` also feeds the breaker, so one client could push every request on the connection to the fallback. |
+| `ArgumentOutOfRangeException` | `AcquireAsync(n)`, from the .NET `RateLimiter` base class | `n` is negative. The store is never asked. | Pass 0 or more. |
+| `ArgumentOutOfRangeException` | `LocalBudget.ForReplicas` | `sharedPermitLimit` or `replicaCount` is below 1. | Check the configuration values it reads, often a replica count that was never set. |
+| `ArgumentNullException` | `ResilientRateLimiter` constructor, `WithResilience`, `ResilientRateLimitPartition.Get`, `StoreHealth` constructor, `ResilientRateLimitLease` constructor, `UseResilientDefaults`, `AddResilientRateLimiting`, `WithLogging` | A required argument is `null`; or no fallback is given while `FailureBehavior` is `LocalFallback` (for `Get`: at the first request for a key). | Pass the argument; or set `FailureBehavior` to `FailOpen` or `FailClosed` if you really want no fallback. |
+| `InvalidOperationException` | `ResilientRateLimiterOptions.Validate()`, `StoreHealthOptions.Validate()`, and every constructor or method that calls them | The options are incomplete or contradictory. The message lists every broken rule, one per line. | Fix each listed setting. See [`ResilientRateLimiterOptions.Validate()`](#limiter-options-validate) and [`StoreHealthOptions.Validate()`](#storehealthoptions-validate). |
+| `InvalidOperationException` | `AddResilientRateLimiting` | It was called a second time on the same service collection. | Call it once. Build a second connection's `StoreHealth` by hand with [`WithLogging`](#withlogging). |
+| `InvalidOperationException` | first resolution of the registered `StoreHealth` | The options returned by `configure` fail validation. | Fix `configure`. |
+| `Microsoft.Extensions.Options.OptionsValidationException` | application startup (`ValidateOnStart` from `AddResilientRateLimiting`) | The `StoreHealthOptions` values bound from configuration fail validation. | Fix `appsettings.json` or the other configuration source. |
+| `OperationCanceledException` | `AcquireAsync` | Your cancellation token was cancelled. Never treated as a store failure. | Expected when a request is aborted; nothing to fix. |
+| `ObjectDisposedException` | `AcquireAsync` | The primary or fallback limiter was disposed, often by a `using` on a limiter you handed to the wrapper or to a partition factory. | Remove that `using`; dispose only the wrapper. |
+| `StackExchange.Redis.RedisConnectionException` | a `RedisRateLimiting` limiter used **without** this library | Redis cannot be reached. Each call waits about 5 seconds and then throws (**measured**, see [measurements.md](measurements.md#redisratelimiting-alone-while-redis-is-unreachable)). | Wrap the limiter with this library. Wrapped, the exception is a store failure: the fallback path answers within `StoreTimeout` and the breaker stops further calls. |
+
+With `ShouldHandle` set, your predicate decides for every exception from the store limiter except caller cancellation and the library's own timeout and open-breaker exceptions (see [`StoreHealthOptions`](#storehealthoptions)). Exceptions thrown by the fallback limiter always reach the caller.
 
 Next: [04-configuration.md](04-configuration.md) — every option in detail: why each default, when to change it, and what goes wrong if it is wrong.

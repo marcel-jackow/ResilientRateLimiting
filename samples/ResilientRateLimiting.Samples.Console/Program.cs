@@ -38,6 +38,7 @@ await Run("store-health-time-provider", Scenarios.StoreHealthTimeProvider);
 await Run("store-health-validate", Scenarios.StoreHealthValidate);
 await Run("limiter-options-all", Scenarios.LimiterOptionsAll);
 await Run("dispose-async", Scenarios.DisposeAsyncScenario);
+await Run("custom-lease", Scenarios.CustomLease);
 
 return;
 
