@@ -6,6 +6,18 @@ using System.Threading.RateLimiting;
 namespace ResilientRateLimiting;
 
 /// <summary>The health of one shared store. Create one per store connection and share it across partitions.</summary>
+/// <remarks>
+/// <para>Create exactly one instance per store connection, and pass the same instance to every
+/// <see cref="ResilientRateLimiter"/> and every partition that uses that connection.</para>
+/// <para>Creating one per partition instead of sharing a single instance breaks the health tracking it exists for:
+/// the circuit breaker never sees enough calls to open, because each partition's own instance only sees that
+/// partition's traffic; the live-partition count kept for <see cref="StoreHealthOptions.MaxWarmPartitions"/> is
+/// wrong, because each instance only counts the one partition holding it; and <see cref="StoreHealthOptions.OnStoreFailure"/>
+/// reports the first failure again for every partition instead of once for the whole store.</para>
+/// <para>The constructor validates <see cref="StoreHealthOptions"/>, so a wrong setup fails at startup rather than
+/// on the first request. This type holds no unmanaged resources and is not disposable; only the limiters that use it
+/// need to be disposed.</para>
+/// </remarks>
 public sealed class StoreHealth
 {
     private readonly ResiliencePipeline<RateLimitLease> _pipeline;

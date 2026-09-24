@@ -20,7 +20,7 @@ public static class ResilientRateLimitPartition
     /// var limiter = PartitionedRateLimiter.Create&lt;HttpContext, string&gt;(context =>
     ///     ResilientRateLimitPartition.Get(
     ///         partitionKey: context.User.Identity?.Name ?? "anonymous",
-    ///         primaryFactory: key => new RedisFixedWindowRateLimiter(key, storeWindowOptions),
+    ///         primaryFactory: key => new RedisSlidingWindowRateLimiter&lt;string&gt;(key, storeWindowOptions),
     ///         fallbackFactory: key => new FixedWindowRateLimiter(fallbackOptions),
     ///         options: resilienceOptions,
     ///         storeHealth: storeHealth));

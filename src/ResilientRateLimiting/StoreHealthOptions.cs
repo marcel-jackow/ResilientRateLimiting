@@ -36,10 +36,13 @@ public sealed record StoreHealthOptions
 
     /// <summary>Decides, for exceptions thrown by the store limiter, whether one counts as a store failure. The library's own timeout and open-breaker exceptions always count as store failures, and caller cancellation never does, regardless of what this returns.</summary>
     /// <remarks>
-    /// Default: <see langword="null"/>. When this is <see langword="null"/> (or it is set but does not classify a
-    /// given exception), <see cref="ArgumentException"/>, <see cref="ObjectDisposedException"/>, and
-    /// <see cref="InvalidOperationException"/> are treated as caller mistakes and reach the caller; every other
-    /// exception is treated as a store failure and triggers the fallback path.
+    /// Default: <see langword="null"/>. Two rules are checked first and cannot be overridden: caller cancellation is
+    /// never a store failure, and the library's own timeout and open-breaker exceptions are always a store failure.
+    /// For every other exception, if this is set, its answer decides the outcome; a predicate that returns
+    /// <see langword="false"/> for an exception it does not recognise sends that exception to the caller instead of
+    /// triggering the fallback path. Only when this is <see langword="null"/> does the library fall back to its own
+    /// default: <see cref="ArgumentException"/>, <see cref="ObjectDisposedException"/>, and
+    /// <see cref="InvalidOperationException"/> reach the caller, and every other exception counts as a store failure.
     /// </remarks>
     public Func<Exception, bool>? ShouldHandle { get; init; }
 
