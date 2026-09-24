@@ -237,7 +237,7 @@ builder.Services.AddResilientRateLimiting(
 ```
 From `samples/ResilientRateLimiting.Samples.Web/Program.cs`
 
-The connection multiplexer itself (`redis`) is registered so any code that needs it (here, the rate limiting policy below) can ask for it. `AddResilientRateLimiting` also validates the bound options on startup and wires up `ValidateOnStart`, so a mistake in `appsettings.json` (for example a `BreakDuration` of zero) fails fast instead of only showing up once the store first misbehaves.
+The connection multiplexer itself (`redis`) is registered as a singleton too, but the policy below does not resolve it from DI: it is a local variable in `Program.cs`, so the policy's lambda simply captures it by closure (`ConnectionMultiplexerFactory = () => redis`). Only `StoreHealth` is resolved from `context.RequestServices` inside the policy, because it must be the one shared instance for the connection, and DI is how that instance reaches code running per request. `AddResilientRateLimiting` also validates the bound options on startup and wires up `ValidateOnStart`, so a mistake in `appsettings.json` (for example a `BreakDuration` of zero) fails fast instead of only showing up once the store first misbehaves.
 
 **The policy.** ASP.NET Core's own rate limiting middleware (`AddRateLimiter`, `UseRateLimiter`) is unchanged; this library only supplies the partition and the defaults:
 
@@ -320,6 +320,8 @@ $ time curl -s -o /dev/null -w "%{http_code}\n" -H "X-Client-Id: carol" http://l
 real    0m0.104s
 ```
 
+(the exact time varies by machine; the point is that it is close to the 20 ms timeout plus normal request overhead, not the several seconds a plain Redis client would wait)
+
 The app's console shows why: the store call failed after the configured 20 ms, and (once enough calls have failed) the circuit breaker opens, exactly as [The circuit breaker](01-concepts.md#the-circuit-breaker) describes:
 
 ```text
@@ -347,7 +349,9 @@ Retry-After: 118
 X-RateLimit-Degraded: true
 ```
 
-`X-RateLimit-Degraded: true` comes from `UseResilientDefaults(emitDegradedHeader: ...)`: the sample only adds it for loopback callers (so a health check or an internal caller can see the service is running degraded, without exposing that detail to the public internet). `Retry-After: 118` (seconds) is this library's estimate while degraded: no value from the fallback limiter itself, so it falls back to `FallbackRecoveryTime`, plus the random spread and the extra wait that [Retry-After](01-concepts.md#retry-after) explains are added on a degraded path.
+`X-RateLimit-Degraded: true` comes from `UseResilientDefaults(emitDegradedHeader: ...)`: the sample only adds it for loopback callers (so a health check or an internal caller can see the service is running degraded, without exposing that detail to the public internet).
+
+`Retry-After: 118` (seconds) is not this library's own estimate here: the fallback is a `FixedWindowRateLimiter`, and the built-in class does give a `MetadataName.RetryAfter` value on a rejection (the time until its window resets). This library's `RetryAfterCalculator` prefers that value over its own estimate (`FallbackRecoveryTime` or `BreakDuration`), and only falls back to the estimate when the answering limiter gives no value at all — as it does not for `RedisRateLimiting`'s limiters (see [Step 4](#step-4-an-aspnet-core-app-with-redis)'s curl output above), for `FailClosed`, and for a `Recovery` refusal. On a degraded path the library also adds a random spread and, while degraded, a longer wait, both capped so their sum never exceeds `MaxAddedRetryDelay` (60 seconds by default). Because `erin`'s burst landed right after the fallback's one-minute window had just opened, the fixed window's own value here is close to a full 60 seconds; working through the same arithmetic for this configuration gives a range of about 108 to 120 seconds, which is where the console's 118 falls. Run the curl again yourself and you will likely see a different number in that range — the spread is random on purpose, so that many rejected clients do not all retry at the same moment. [Retry-After](01-concepts.md#retry-after) explains the three steps in general.
 
 Stop the app (Ctrl+C) and the container (`docker stop rrl-getting-started-redis`, then `docker rm` it if you are done with it) when you are finished.
 
