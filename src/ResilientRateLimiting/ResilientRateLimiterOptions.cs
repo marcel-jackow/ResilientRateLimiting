@@ -3,6 +3,9 @@ namespace ResilientRateLimiting;
 /// <summary>Configuration for one <see cref="ResilientRateLimiter"/>. Settings shared by every limiter on a store connection live on <see cref="StoreHealthOptions"/>.</summary>
 public sealed record ResilientRateLimiterOptions
 {
+    /// <summary>The largest accepted <see cref="FallbackRecoveryTime"/>: one day.</summary>
+    public static readonly TimeSpan MaxFallbackRecoveryTime = TimeSpan.FromDays(1);
+
     /// <summary>What to do when the store cannot answer.</summary>
     public StoreFailureBehavior FailureBehavior { get; init; } = StoreFailureBehavior.LocalFallback;
 
@@ -41,6 +44,13 @@ public sealed record ResilientRateLimiterOptions
                 $"{nameof(FallbackRecoveryTime)} must be set when {nameof(FailureBehavior)} is " +
                 $"{nameof(StoreFailureBehavior.LocalFallback)}. A RateLimiter cannot be asked how long " +
                 "it takes to refill.");
+        }
+
+        if (FallbackRecoveryTime > MaxFallbackRecoveryTime)
+        {
+            (errors ??= []).Add(
+                $"{nameof(FallbackRecoveryTime)} must be at most 1 day. It is how long the fallback limiter " +
+                "takes to refill completely; a larger value usually means a unit mistake.");
         }
 
         if (MaxAddedRetryDelay < TimeSpan.Zero)
