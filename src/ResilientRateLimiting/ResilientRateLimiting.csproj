@@ -9,6 +9,7 @@
   <ItemGroup>
     <InternalsVisibleTo Include="ResilientRateLimiting.Tests" />
     <InternalsVisibleTo Include="ResilientRateLimiting.IntegrationTests" />
+    <InternalsVisibleTo Include="ResilientRateLimiting.AspNetCore.Tests" />
   </ItemGroup>
   <ItemGroup>
     <None Include="../../README.md" Pack="true" PackagePath="/" Condition="Exists('../../README.md')" />

@@ -101,15 +101,16 @@ public class ResilientRateLimitLeaseTests
     }
 
     [Fact]
-    public void Prefers_the_inner_retry_after_over_the_supplied_one()
+    public void Prefers_the_supplied_retry_after_over_the_inner_one()
     {
+        // The supplied value was already computed from the inner one, so it replaces it.
         using var lease = new ResilientRateLimitLease(
             new StubLease(acquired: false, retryAfter: TimeSpan.FromSeconds(7)),
             LeaseSource.Distributed,
             retryAfter: TimeSpan.FromSeconds(30));
 
         Assert.True(lease.TryGetMetadata(MetadataName.RetryAfter.Name, out var value));
-        Assert.Equal(TimeSpan.FromSeconds(7), value);
+        Assert.Equal(TimeSpan.FromSeconds(30), value);
     }
 
     [Fact]

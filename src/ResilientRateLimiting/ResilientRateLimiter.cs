@@ -7,13 +7,18 @@ namespace ResilientRateLimiting;
 /// <remarks>Must not wrap another <see cref="ResilientRateLimiter"/>: nesting shadows the inner lease's source metadata.</remarks>
 public sealed class ResilientRateLimiter : RateLimiter
 {
+    /// <summary>The Meter name to pass to <c>AddMeter</c> when wiring up OpenTelemetry.</summary>
+    public const string MeterName = "ResilientRateLimiting";
+
     private readonly RateLimiter _primary;
     private readonly LocalMirror? _mirror;
+    private readonly ResilientRateLimiterOptions _options;
     private readonly StoreFailureBehavior _failureBehavior;
     private readonly TimeSpan _storeTimeout;
     private readonly TimeProvider _timeProvider;
     private readonly StoreHealth _storeHealth;
     private readonly TimeSpan _recoveryTime;
+    private readonly RetryAfterCalculator _retryAfter;
     private long _recoveryArmedAt = long.MinValue;
     private long _lastFallbackAt = long.MinValue;
     private long _lastActivity;
@@ -43,12 +48,14 @@ public sealed class ResilientRateLimiter : RateLimiter
         }
 
         _primary = primary;
+        _options = options;
         _failureBehavior = options.FailureBehavior;
         _storeTimeout = storeHealth.Options.StoreTimeout;
         _timeProvider = timeProvider ?? TimeProvider.System;
         _lastActivity = _timeProvider.GetTimestamp();
         _storeHealth = storeHealth;
         _recoveryTime = options.FallbackRecoveryTime;
+        _retryAfter = new RetryAfterCalculator(options, storeHealth.Options.BreakDuration);
 
         // Built whenever a fallback was supplied, not only when it is consulted, so that a
         // fail-open limiter still disposes the limiter it was handed.
@@ -94,7 +101,10 @@ public sealed class ResilientRateLimiter : RateLimiter
                 {
                     RecordActivity();
 
-                    return new ResilientRateLimitLease(StaticLease.Rejected, LeaseSource.LocalFallback, retryAfter);
+                    var computed = _retryAfter.Compute(retryAfter, LeaseSource.Recovery);
+                    var refused = new ResilientRateLimitLease(StaticLease.Rejected, LeaseSource.Recovery, computed);
+                    ResilientRateLimiterMetrics.Shared.RecordLease(_options, refused.Source, refused.IsAcquired);
+                    return refused;
                 }
             }
 
@@ -118,11 +128,16 @@ public sealed class ResilientRateLimiter : RateLimiter
 
                 ArmRecovery();
 
-                return new ResilientRateLimitLease(lease, LeaseSource.Distributed);
+                var distributed = new ResilientRateLimitLease(lease, LeaseSource.Distributed, _retryAfter.Compute(lease, LeaseSource.Distributed));
+                ResilientRateLimiterMetrics.Shared.RecordLease(_options, distributed.Source, distributed.IsAcquired);
+                return distributed;
             }
             catch (Exception exception) when (_storeHealth.IsStoreFailure(exception))
             {
                 Interlocked.Exchange(ref _lastFallbackAt, _timeProvider.GetTimestamp());
+
+                ResilientRateLimiterMetrics.Shared.RecordStoreFailure(_options, exception);
+                _storeHealth.ReportFirstOccurrence(exception);
 
                 // Anything thrown from here on has nowhere left to go, and reaches the caller.
                 var served = verdict == LocalVerdict.Granted
@@ -130,6 +145,8 @@ public sealed class ResilientRateLimiter : RateLimiter
                     : await FallbackAsync(permitCount, cancellationToken).ConfigureAwait(false);
 
                 RecordActivity();
+
+                ResilientRateLimiterMetrics.Shared.RecordLease(_options, served.Source, served.IsAcquired);
 
                 return served;
             }
@@ -284,17 +301,21 @@ public sealed class ResilientRateLimiter : RateLimiter
             TaskContinuationOptions.None,
             TaskScheduler.Default);
 
-    private async ValueTask<RateLimitLease> FallbackAsync(int permitCount, CancellationToken cancellationToken) =>
+    private async ValueTask<ResilientRateLimitLease> FallbackAsync(int permitCount, CancellationToken cancellationToken) =>
         _failureBehavior switch
         {
             StoreFailureBehavior.FailOpen =>
                 new ResilientRateLimitLease(StaticLease.Acquired, LeaseSource.FailOpen),
 
             StoreFailureBehavior.FailClosed =>
-                new ResilientRateLimitLease(StaticLease.Rejected, LeaseSource.FailClosed),
+                new ResilientRateLimitLease(
+                    StaticLease.Rejected,
+                    LeaseSource.FailClosed,
+                    _retryAfter.Compute(StaticLease.Rejected, LeaseSource.FailClosed)),
 
-            _ => new ResilientRateLimitLease(
-                await _mirror!.AcquireAsync(permitCount, cancellationToken).ConfigureAwait(false),
-                LeaseSource.LocalFallback),
+            _ => BuildFallbackLease(await _mirror!.AcquireAsync(permitCount, cancellationToken).ConfigureAwait(false)),
         };
+
+    private ResilientRateLimitLease BuildFallbackLease(RateLimitLease inner) =>
+        new(inner, LeaseSource.LocalFallback, _retryAfter.Compute(inner, LeaseSource.LocalFallback));
 }
