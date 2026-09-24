@@ -8,6 +8,7 @@
   </Folder>
   <Folder Name="/samples/">
     <Project Path="samples/ResilientRateLimiting.Samples.Console/ResilientRateLimiting.Samples.Console.csproj" />
+    <Project Path="samples/ResilientRateLimiting.Samples.Web/ResilientRateLimiting.Samples.Web.csproj" />
   </Folder>
   <Folder Name="/tests/">
     <Project Path="tests/ResilientRateLimiting.AspNetCore.Tests/ResilientRateLimiting.AspNetCore.Tests.csproj" />
