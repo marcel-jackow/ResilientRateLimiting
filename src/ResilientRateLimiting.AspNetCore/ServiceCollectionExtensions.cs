@@ -51,7 +51,7 @@ public static class ServiceCollectionExtensions
     /// <code>
     /// builder.Services.AddResilientRateLimiting(
     ///     builder.Configuration.GetSection("ResilientRateLimiting:Store"),
-    ///     configure: options => options with { ShouldHandle = ex => ex is RedisConnectionException });
+    ///     configure: options => options with { ShouldHandle = ex => ex is RedisConnectionException or TimeoutException });
     /// </code>
     /// </example>
     public static IServiceCollection AddResilientRateLimiting(

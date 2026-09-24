@@ -53,7 +53,7 @@ The library has two options types, and they do not work the same way.
 - If only 2 of the 6 fail, the share is about 0.33, below 0.5. Enough calls happened, but not enough of them failed, so the breaker stays closed.
 - If only 4 calls happen in the window and all 4 fail, the failed share is 1.0 — every call failed — but only 4 calls happened, below the 5 required. The breaker still stays closed: it will not open on too few calls, no matter how bad they look.
 
-**When to change them.** Raise `FailuresBeforeOpen` for a low-traffic policy where a handful of calls is not enough evidence that the store, rather than one unlucky client, is the problem. Lower `FailureRatio` if you want the breaker to react to a smaller share of failures (for a resource where a partial outage is already too costly to keep hammering).
+**When to change them.** Raise `FailuresBeforeOpen` for a low-traffic policy where a handful of calls is not enough evidence that the store, rather than one unlucky client, is the problem. Lower `FailureRatio` if you want the breaker to react to a smaller share of failures (for a resource where a partial outage is already too costly to keep sending more calls at).
 
 **Too low (either one).** The breaker opens on ordinary noise — a couple of slow calls at the wrong moment — and treats a healthy store as failed. Every partition on that connection then answers from the fallback path (or fails open or closed) for the whole `BreakDuration`, for no real reason.
 
@@ -109,11 +109,11 @@ The library has two options types, and they do not work the same way.
 
 **Default.** 1.0 (no effect) — a **starting point**.
 
-**When to change it.** Lower it where restarts and store outages tend to happen together — for example, the same network problem that takes Redis down often also triggers a wave of pod restarts. A newly started replica's fallback limiter is empty, but that does not mean the client's share of the limit is unused: another replica may have just spent it. A factor below 1.0 makes a fresh replica serve a smaller slice of its local budget until it proves the store is reachable.
+**When to change it.** Lower it where restarts and store outages tend to happen together — for example, the same network problem that makes Redis unreachable often also triggers a wave of pod restarts. A newly started replica's fallback limiter is empty, but that does not mean the client's share of the limit is unused: another replica may have just spent it. A factor below 1.0 makes a fresh replica serve a smaller slice of its local budget until it proves the store is reachable.
 
 **Too low (close to zero).** Every restart — even a routine deployment, with the store perfectly healthy — temporarily charges far more per request than it should, because the rule applies from process start regardless of whether the store is actually down. Legitimate traffic gets rejected during a normal rollout.
 
-**Too high (the default, 1.0, meaning no effect).** During an outage that coincides with restarts, each fresh replica hands out its full local budget on top of what the same clients already spent through other, longer-lived replicas — the exact overshoot that cold start exists to catch (see [Cold start](01-concepts.md#cold-start)).
+**Too high (the default, 1.0, meaning no effect).** During an outage that coincides with restarts, each fresh replica allows its full local budget on top of what the same clients already spent through other, longer-lived replicas — the exact overshoot that cold start exists to catch (see [Cold start](01-concepts.md#cold-start)).
 
 **Valid range.** Greater than 0, at most 1.
 
@@ -130,13 +130,13 @@ The library has two options types, and they do not work the same way.
 StoreHealthOptions Configure(StoreHealthOptions options) => options with
 {
     // The library's own timeout and breaker always count as store failures, so this only names the store's own exceptions.
-    ShouldHandle = exception => exception is RedisException,
+    ShouldHandle = exception => exception is RedisException or TimeoutException,
     OnStoreFailure = exception => Console.WriteLine($"Store failure: {exception.GetType().Name}"),
 };
 ```
 From `samples/ResilientRateLimiting.Samples.Web/Program.cs`
 
-**When to change them.** Set `ShouldHandle` once you know which exceptions your store client throws for a real outage (for example `RedisException` for `StackExchange.Redis`), so that only those exceptions are treated as store failures. Set `OnStoreFailure` to feed your own logging or metrics beyond what [05-telemetry.md](05-telemetry.md) already covers.
+**When to change them.** Set `ShouldHandle` once you know which exceptions your store client throws for a real outage (for example `RedisException` for `StackExchange.Redis`), so that only those exceptions are treated as store failures. Include the client's own timeout exception too: `StackExchange.Redis`'s `RedisTimeoutException` derives from the .NET `TimeoutException`, not from `RedisException`, so a predicate that checks only for `RedisException` misses it and sends a client-side timeout straight to your caller instead of the fallback path. Set `OnStoreFailure` to feed your own logging or metrics beyond what [05-telemetry.md](05-telemetry.md) already covers.
 
 **What goes wrong if wrong.** A `ShouldHandle` that returns `false` for exceptions it does not recognise sends those exceptions straight to your caller instead of the fallback path — a real store error can then become an unhandled exception in your app. A slow `OnStoreFailure` (for example, a blocking network call) delays the very request that just hit a store failure, because it runs on the request path.
 

@@ -389,7 +389,7 @@ internal static class Scenarios
             QueueLimit = 0,
         });
 
-        // The recovery time is the whole window, not one segment: a caller only fully refills once the whole window has rolled over.
+        // The recovery time is the whole window, not one segment: a caller only fully refills once the whole window has finished and a new one has started.
         var fallbackRecoveryTime = window;
         // end-snippet
 

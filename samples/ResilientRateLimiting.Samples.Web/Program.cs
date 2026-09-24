@@ -26,7 +26,7 @@ var redis = await ConnectionMultiplexer.ConnectAsync(redisOptions);
 StoreHealthOptions Configure(StoreHealthOptions options) => options with
 {
     // The library's own timeout and breaker always count as store failures, so this only names the store's own exceptions.
-    ShouldHandle = exception => exception is RedisException,
+    ShouldHandle = exception => exception is RedisException or TimeoutException,
     OnStoreFailure = exception => Console.WriteLine($"Store failure: {exception.GetType().Name}"),
 };
 // end-snippet

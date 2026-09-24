@@ -16,6 +16,6 @@ public enum LeaseSource
     /// <summary>The store failed and the configured behaviour was to reject the request.</summary>
     FailClosed,
 
-    /// <summary>The store recently answered again after an outage, and this request was refused by the local counter before the store was asked, so a burst of retries right after recovery does not overwhelm the store.</summary>
+    /// <summary>After an outage, the store did not count the requests replicas served locally. So for <see cref="ResilientRateLimiterOptions.FallbackRecoveryTime"/>, the local counter is asked first, and a refusal here stops a client from getting a second allowance: once from the local fallback during the outage, and once from the store right after it.</summary>
     Recovery,
 }

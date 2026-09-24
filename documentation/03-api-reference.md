@@ -740,7 +740,7 @@ From `samples/ResilientRateLimiting.Samples.Console/Scenarios.cs`
 
 - **Recovery mode.** When the store answers again after an outage, the limiter stays in [recovery mode](01-concepts.md#recovery-mode) for this long, and asks the local counter first. This stops clients from getting a second allowance right after the outage (see [Recovery after an outage](01-concepts.md#recovery-after-an-outage)).
 - **Warm retention.** An idle partition keeps warm state for this long, or for `MaxWarmRetention` if that is shorter.
-- **The degraded Retry-After estimate.** When the store has failed and the limiter that answered gives no Retry-After value of its own (for example with `FailClosed`, for a recovery-gate refusal, or with a fallback that adds none), the library uses this value as its estimate. If it is zero (allowed with `FailOpen` and `FailClosed`), the estimate uses `StoreHealthOptions.BreakDuration` instead. A built-in `FixedWindowRateLimiter` fallback does give its own value (the time to its next window), and then that value is used.
+- **The degraded Retry-After estimate.** When the store has failed and the limiter that answered gives no Retry-After value of its own (for example with `FailClosed`, where no limiter answers at all, or with a fallback that adds none), the library uses this value as its estimate. If it is zero (allowed with `FailOpen` and `FailClosed`), the estimate uses `StoreHealthOptions.BreakDuration` instead. A built-in `FixedWindowRateLimiter` fallback does give its own value (the time to its next window), and then that value is used. A `Recovery` refusal is different: the local fallback limiter is what answers it, so it carries that limiter's own value the same way a `LocalFallback` answer does.
 
 **Why you must type it: the library cannot read it from the limiter.** It would be simpler if the library asked the fallback limiter. It cannot, because the .NET limiters do not make the needed settings public:
 
@@ -799,7 +799,7 @@ var fallback = new SlidingWindowRateLimiter(new SlidingWindowRateLimiterOptions
     QueueLimit = 0,
 });
 
-// The recovery time is the whole window, not one segment: a caller only fully refills once the whole window has rolled over.
+// The recovery time is the whole window, not one segment: a caller only fully refills once the whole window has finished and a new one has started.
 var fallbackRecoveryTime = window;
 ```
 
@@ -1216,7 +1216,7 @@ Steps 2 to 4 run when the `StoreHealth` is first resolved, not when this method 
 StoreHealthOptions Configure(StoreHealthOptions options) => options with
 {
     // The library's own timeout and breaker always count as store failures, so this only names the store's own exceptions.
-    ShouldHandle = exception => exception is RedisException,
+    ShouldHandle = exception => exception is RedisException or TimeoutException,
     OnStoreFailure = exception => Console.WriteLine($"Store failure: {exception.GetType().Name}"),
 };
 ```
