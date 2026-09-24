@@ -18,10 +18,12 @@ public static class ServiceCollectionExtensions
     /// </summary>
     /// <param name="services">The service collection to add to.</param>
     /// <param name="storeHealthSection">The configuration section for this store connection.</param>
+    /// <param name="configure">Applied to the bound options before logging is attached, for the settings configuration cannot bind, such as ShouldHandle and OnStoreFailure; the result is validated when the <see cref="StoreHealth"/> is created.</param>
     /// <returns>The same service collection, for chaining.</returns>
     public static IServiceCollection AddResilientRateLimiting(
         this IServiceCollection services,
-        IConfiguration storeHealthSection)
+        IConfiguration storeHealthSection,
+        Func<StoreHealthOptions, StoreHealthOptions>? configure = null)
     {
         ArgumentNullException.ThrowIfNull(services);
         ArgumentNullException.ThrowIfNull(storeHealthSection);
@@ -45,7 +47,9 @@ public static class ServiceCollectionExtensions
             var logger = loggerFactory.CreateLogger("ResilientRateLimiting.StoreHealth");
             var timeProvider = provider.GetService<TimeProvider>() ?? TimeProvider.System;
 
-            return new StoreHealth(options.WithLogging(logger), timeProvider);
+            var configured = configure is null ? options : configure(options);
+
+            return new StoreHealth(configured.WithLogging(logger), timeProvider);
         });
 
         return services;

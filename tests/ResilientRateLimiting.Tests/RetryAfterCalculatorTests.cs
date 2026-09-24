@@ -89,25 +89,37 @@ public class RetryAfterCalculatorTests
     }
 
     [Fact]
-    public void Estimates_from_the_fallback_recovery_time_when_the_inner_lease_has_none()
+    public void A_healthy_store_rejection_with_no_inner_value_gets_no_retry_after()
     {
+        // FallbackRecoveryTime/BreakDuration describe an outage, not the store's own window, so a
+        // healthy store's rejection with no inner value carries no estimate.
         var calculator = new RetryAfterCalculator(Options(), BreakDuration, sampler: () => 0);
 
         var value = calculator.Compute(Rejected(), LeaseSource.Distributed);
 
-        // 60 s, store up: the spread is 10..20 %, so 6..12 s. The sampler picks the low end: 60 + 6 = 66 s.
-        Assert.Equal(TimeSpan.FromSeconds(66), value);
+        Assert.Null(value);
     }
 
     [Fact]
-    public void Adds_the_high_end_of_the_band_to_the_estimate()
+    public void Estimates_from_the_fallback_recovery_time_while_the_store_is_down()
+    {
+        var calculator = new RetryAfterCalculator(Options(), BreakDuration, sampler: () => 0);
+
+        var value = calculator.Compute(Rejected(), LeaseSource.LocalFallback);
+
+        // 60 s, store down: a 12..24 s spread, doubling capped to the 36 s the cap has left. The sampler picks the low end: 60 + 36 + 12 = 108 s.
+        Assert.Equal(TimeSpan.FromSeconds(108), value);
+    }
+
+    [Fact]
+    public void Adds_the_high_end_of_the_band_to_the_estimate_while_the_store_is_down()
     {
         var calculator = new RetryAfterCalculator(Options(), BreakDuration, sampler: () => 1);
 
-        var value = calculator.Compute(Rejected(), LeaseSource.Distributed);
+        var value = calculator.Compute(Rejected(), LeaseSource.LocalFallback);
 
-        // 60 s, store up: a 6..12 s spread. The sampler picks the high end: 60 + 12 = 72 s.
-        Assert.Equal(TimeSpan.FromSeconds(72), value);
+        // 60 s, store down: a 12..24 s spread, doubling capped to the 36 s the cap has left. The sampler picks the high end: 60 + 36 + 24 = 120 s.
+        Assert.Equal(TimeSpan.FromSeconds(120), value);
     }
 
     [Fact]
@@ -260,7 +272,7 @@ public class RetryAfterCalculatorTests
     }
 
     [Fact]
-    public void A_zero_cap_still_floors_to_one_second()
+    public void A_zero_cap_still_floors_to_one_second_while_the_store_is_down()
     {
         var options = new ResilientRateLimiterOptions
         {
@@ -269,7 +281,7 @@ public class RetryAfterCalculatorTests
         };
         var calculator = new RetryAfterCalculator(options, BreakDuration, sampler: () => 0);
 
-        var value = calculator.Compute(Rejected(), LeaseSource.Distributed);
+        var value = calculator.Compute(Rejected(), LeaseSource.LocalFallback);
 
         Assert.Equal(TimeSpan.FromSeconds(1), value);
     }
@@ -293,7 +305,7 @@ public class RetryAfterCalculatorTests
     }
 
     [Fact]
-    public void A_positive_cap_still_floors_to_one_second_when_the_cap_itself_is_tiny()
+    public void A_positive_cap_still_floors_to_one_second_when_the_cap_itself_is_tiny_while_the_store_is_down()
     {
         var options = new ResilientRateLimiterOptions
         {
@@ -302,7 +314,7 @@ public class RetryAfterCalculatorTests
         };
         var calculator = new RetryAfterCalculator(options, BreakDuration, sampler: () => 0);
 
-        var value = calculator.Compute(Rejected(), LeaseSource.Distributed);
+        var value = calculator.Compute(Rejected(), LeaseSource.LocalFallback);
 
         // 1 ms cap: the spread stays under a millisecond, so the 1 s floor decides.
         Assert.Equal(TimeSpan.FromSeconds(1), value);
@@ -358,8 +370,8 @@ public class RetryAfterCalculatorTests
 
         var value = calculator.Compute(new ThrowingMetadataLease(), LeaseSource.Distributed);
 
-        // No inner value: the estimate is FallbackRecoveryTime (60 s).
-        Assert.Equal(TimeSpan.FromSeconds(66), value);
+        // Swallowed as no inner value; a healthy store with no value carries no estimate.
+        Assert.Null(value);
     }
 
     [Fact]

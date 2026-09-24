@@ -69,6 +69,22 @@ public class RetryAfterWiringTests
     }
 
     [Fact]
+    public async Task A_healthy_store_rejection_with_no_inner_value_carries_no_retry_after()
+    {
+        // The store answered (it is healthy), it just gave no RetryAfter: FallbackRecoveryTime describes
+        // an outage, not the store's own window, so nothing should be estimated here.
+        var clock = new FakeTimeProvider();
+        using var primary = new FakeRateLimiter(permitLimit: 0);
+        using var fallback = new FakeRateLimiter(permitLimit: 1);
+        using var limiter = new ResilientRateLimiter(primary, fallback, Options(), new StoreHealth(StoreOptions(), clock), clock);
+
+        using var lease = await limiter.AcquireAsync(1, TestContext.Current.CancellationToken);
+
+        Assert.False(lease.IsAcquired);
+        Assert.Null(RetryAfterOf(lease));
+    }
+
+    [Fact]
     public async Task A_local_fallback_rejection_gets_the_degraded_jittered_value()
     {
         var clock = new FakeTimeProvider();

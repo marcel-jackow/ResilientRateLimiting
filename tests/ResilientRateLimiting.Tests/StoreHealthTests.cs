@@ -347,7 +347,7 @@ public class StoreHealthTests
     }
 
     [Fact]
-    public async Task Concurrent_failures_of_a_new_type_are_reported_exactly_once()
+    public void Concurrent_failures_of_a_new_type_are_reported_exactly_once()
     {
         var clock = new FakeTimeProvider();
         var reportCount = 0;
@@ -358,19 +358,25 @@ public class StoreHealthTests
         const int concurrency = 16;
         using var barrier = new Barrier(concurrency);
 
-        var tasks = Enumerable.Range(0, concurrency).Select(_ => Task.Run(() =>
+        // Dedicated threads, not Task.Run: the pool must stay free on small CI agents.
+        var threads = Enumerable.Range(0, concurrency).Select(_ => new Thread(() =>
         {
             barrier.SignalAndWait();
             health.ReportFirstOccurrence(new InvalidDataException("race"));
-        }));
+        })).ToArray();
 
-        await Task.WhenAll(tasks).WaitAsync(TestContext.Current.CancellationToken);
+        foreach (var thread in threads)
+        {
+            thread.Start();
+        }
+
+        JoinAll(threads);
 
         Assert.Equal(1, reportCount);
     }
 
     [Fact]
-    public async Task Concurrent_failures_of_an_already_quiet_type_are_reported_exactly_once()
+    public void Concurrent_failures_of_an_already_quiet_type_are_reported_exactly_once()
     {
         var clock = new FakeTimeProvider();
         var reportCount = 0;
@@ -391,14 +397,29 @@ public class StoreHealthTests
         const int concurrency = 16;
         using var barrier = new Barrier(concurrency);
 
-        var tasks = Enumerable.Range(0, concurrency).Select(_ => Task.Run(() =>
+        // Dedicated threads, not Task.Run: the pool must stay free on small CI agents.
+        var threads = Enumerable.Range(0, concurrency).Select(_ => new Thread(() =>
         {
             barrier.SignalAndWait();
             health.ReportFirstOccurrence(new InvalidDataException("race"));
-        }));
+        })).ToArray();
 
-        await Task.WhenAll(tasks).WaitAsync(TestContext.Current.CancellationToken);
+        foreach (var thread in threads)
+        {
+            thread.Start();
+        }
+
+        JoinAll(threads);
 
         Assert.Equal(2, reportCount);
+    }
+
+    /// <summary>Joins every participant, failing (not hanging) if one does not finish in time.</summary>
+    private static void JoinAll(Thread[] threads)
+    {
+        foreach (var thread in threads)
+        {
+            Assert.True(thread.Join(TimeSpan.FromSeconds(10)), "a participant thread did not finish in time");
+        }
     }
 }

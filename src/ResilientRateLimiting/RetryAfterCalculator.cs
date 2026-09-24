@@ -16,6 +16,13 @@ internal sealed class RetryAfterCalculator(ResilientRateLimiterOptions options, 
     /// <summary>For a path whose inner value was already extracted elsewhere (the recovery gate disposes its lease before this is called).</summary>
     public TimeSpan? Compute(TimeSpan? innerRetryAfter, LeaseSource source)
     {
+        if (innerRetryAfter is null && source == LeaseSource.Distributed)
+        {
+            // A healthy store answered with no RetryAfter: FallbackRecoveryTime/BreakDuration describe an
+            // outage, not the store's own window, so there is nothing to estimate from.
+            return null;
+        }
+
         var degraded = source != LeaseSource.Distributed;
         var baseValue = innerRetryAfter ?? Estimate();
         var cap = options.MaxAddedRetryDelay;

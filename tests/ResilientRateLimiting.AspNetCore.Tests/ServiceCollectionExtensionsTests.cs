@@ -142,4 +142,83 @@ public class ServiceCollectionExtensionsTests
 
         Assert.NotNull(storeHealth);
     }
+
+    [Fact]
+    public void The_configure_delegate_s_ShouldHandle_is_honoured_by_the_resolved_store_health()
+    {
+        // Without ShouldHandle, the default classifier treats InvalidOperationException as a
+        // programming error (not a store failure): a custom ShouldHandle must be able to override that.
+        var configuration = ConfigurationFrom([]);
+
+        var services = new ServiceCollection();
+        services.AddResilientRateLimiting(configuration, o => o with { ShouldHandle = exception => exception is InvalidOperationException });
+
+        using var provider = services.BuildServiceProvider();
+        var storeHealth = provider.GetRequiredService<StoreHealth>();
+
+        Assert.True(storeHealth.IsStoreFailure(new InvalidOperationException()));
+        Assert.False(storeHealth.IsStoreFailure(new IOException()));
+    }
+
+    [Fact]
+    public void The_configure_delegate_s_OnStoreFailure_still_runs_alongside_the_attached_logging()
+    {
+        var configuration = ConfigurationFrom([]);
+        var reported = new List<Exception>();
+        var loggerProvider = new CapturingLoggerProvider();
+
+        var services = new ServiceCollection();
+        services.AddLogging(builder => builder.AddProvider(loggerProvider));
+        services.AddResilientRateLimiting(configuration, o => o with { OnStoreFailure = reported.Add });
+
+        using var provider = services.BuildServiceProvider();
+        var storeHealth = provider.GetRequiredService<StoreHealth>();
+
+        storeHealth.ReportFirstOccurrence(new InvalidDataException("store down"));
+
+        Assert.Single(reported);
+        Assert.Single(loggerProvider.Warnings);
+    }
+
+    [Fact]
+    public void An_omitted_configure_delegate_behaves_as_before()
+    {
+        var configuration = ConfigurationFrom([]);
+
+        var services = new ServiceCollection();
+        services.AddResilientRateLimiting(configuration);
+
+        using var provider = services.BuildServiceProvider();
+        var storeHealth = provider.GetRequiredService<StoreHealth>();
+
+        // The default classifier, unchanged: InvalidOperationException is a programming error, not a store failure.
+        Assert.False(storeHealth.IsStoreFailure(new InvalidOperationException()));
+    }
+
+    /// <summary>Captures Warning-level messages logged through it, without needing a real sink.</summary>
+    private sealed class CapturingLoggerProvider : ILoggerProvider
+    {
+        public List<string> Warnings { get; } = [];
+
+        public ILogger CreateLogger(string categoryName) => new CapturingLogger(this);
+
+        public void Dispose()
+        {
+        }
+
+        private sealed class CapturingLogger(CapturingLoggerProvider owner) : ILogger
+        {
+            public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+
+            public bool IsEnabled(LogLevel logLevel) => true;
+
+            public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception, Func<TState, Exception?, string> formatter)
+            {
+                if (logLevel == LogLevel.Warning)
+                {
+                    owner.Warnings.Add(formatter(state, exception));
+                }
+            }
+        }
+    }
 }
