@@ -46,8 +46,8 @@ internal static class Scenarios
         });
         // end-snippet
 
-        using var primary = new InMemoryStore(permitLimit: 5, window: TimeSpan.FromSeconds(10));
-        using var fallback = new InMemoryStore(permitLimit: 2, window: TimeSpan.FromSeconds(10));
+        var primary = new InMemoryStore(permitLimit: 5, window: TimeSpan.FromSeconds(10));
+        var fallback = new InMemoryStore(permitLimit: 2, window: TimeSpan.FromSeconds(10));
         var options = new ResilientRateLimiterOptions { FallbackRecoveryTime = TimeSpan.FromMinutes(1) };
         using var limiter = primary.WithResilience(fallback, options, storeHealth);
         using var lease = await limiter.AcquireAsync(1);
@@ -75,8 +75,8 @@ internal static class Scenarios
 
     public static async Task Constructor()
     {
-        using var primary = new InMemoryStore(permitLimit: 5, window: TimeSpan.FromSeconds(10));
-        using var fallback = new InMemoryStore(permitLimit: 2, window: TimeSpan.FromSeconds(10));
+        var primary = new InMemoryStore(permitLimit: 5, window: TimeSpan.FromSeconds(10));
+        var fallback = new InMemoryStore(permitLimit: 2, window: TimeSpan.FromSeconds(10));
         var storeHealth = new StoreHealth(new StoreHealthOptions());
         var options = new ResilientRateLimiterOptions { FallbackRecoveryTime = TimeSpan.FromMinutes(1) };
 
@@ -90,8 +90,8 @@ internal static class Scenarios
 
     public static async Task WithResilienceScenario()
     {
-        using var primary = new InMemoryStore(permitLimit: 5, window: TimeSpan.FromSeconds(10));
-        using var fallback = new InMemoryStore(permitLimit: 2, window: TimeSpan.FromSeconds(10));
+        var primary = new InMemoryStore(permitLimit: 5, window: TimeSpan.FromSeconds(10));
+        var fallback = new InMemoryStore(permitLimit: 2, window: TimeSpan.FromSeconds(10));
         var storeHealth = new StoreHealth(new StoreHealthOptions());
         var options = new ResilientRateLimiterOptions { FallbackRecoveryTime = TimeSpan.FromMinutes(1) };
 
@@ -148,7 +148,7 @@ internal static class Scenarios
 
     public static async Task FailOpen()
     {
-        using var primary = new UnreachableStore();
+        var primary = new UnreachableStore();
         var storeHealth = new StoreHealth(new StoreHealthOptions());
 
         // snippet: fail-open
@@ -163,7 +163,7 @@ internal static class Scenarios
 
     public static async Task FailClosed()
     {
-        using var primary = new UnreachableStore();
+        var primary = new UnreachableStore();
         var storeHealth = new StoreHealth(new StoreHealthOptions());
 
         // snippet: fail-closed
@@ -178,8 +178,8 @@ internal static class Scenarios
 
     public static async Task ReadSource()
     {
-        using var primary = new InMemoryStore(permitLimit: 5, window: TimeSpan.FromSeconds(10));
-        using var fallback = new InMemoryStore(permitLimit: 2, window: TimeSpan.FromSeconds(10));
+        var primary = new InMemoryStore(permitLimit: 5, window: TimeSpan.FromSeconds(10));
+        var fallback = new InMemoryStore(permitLimit: 2, window: TimeSpan.FromSeconds(10));
         var storeHealth = new StoreHealth(new StoreHealthOptions());
         var options = new ResilientRateLimiterOptions { FallbackRecoveryTime = TimeSpan.FromMinutes(1) };
         using var limiter = primary.WithResilience(fallback, options, storeHealth);
@@ -204,7 +204,7 @@ internal static class Scenarios
 
     public static async Task ReadRetryAfter()
     {
-        using var primary = new UnreachableStore();
+        var primary = new UnreachableStore();
         var storeHealth = new StoreHealth(new StoreHealthOptions());
         var options = new ResilientRateLimiterOptions { FailureBehavior = StoreFailureBehavior.FailClosed };
         using var limiter = primary.WithResilience(fallback: null, options, storeHealth);
@@ -219,8 +219,8 @@ internal static class Scenarios
 
     public static async Task StoreFailureCallback()
     {
-        using var primary = new UnreachableStore();
-        using var fallback = new InMemoryStore(permitLimit: 2, window: TimeSpan.FromSeconds(10));
+        var primary = new UnreachableStore();
+        var fallback = new InMemoryStore(permitLimit: 2, window: TimeSpan.FromSeconds(10));
         var options = new ResilientRateLimiterOptions { FallbackRecoveryTime = TimeSpan.FromMinutes(1) };
 
         // snippet: store-failure-callback
@@ -270,8 +270,8 @@ internal static class Scenarios
 
     public static async Task TimeProviderScenario()
     {
-        using var primary = new InMemoryStore(permitLimit: 5, window: TimeSpan.FromSeconds(10));
-        using var fallback = new InMemoryStore(permitLimit: 2, window: TimeSpan.FromSeconds(10));
+        var primary = new InMemoryStore(permitLimit: 5, window: TimeSpan.FromSeconds(10));
+        var fallback = new InMemoryStore(permitLimit: 2, window: TimeSpan.FromSeconds(10));
         var storeHealth = new StoreHealth(new StoreHealthOptions());
         var options = new ResilientRateLimiterOptions { FallbackRecoveryTime = TimeSpan.FromMinutes(1) };
 
@@ -287,8 +287,8 @@ internal static class Scenarios
 
     public static async Task AcquireAsyncNotAttempt()
     {
-        using var primary = new InMemoryStore(permitLimit: 5, window: TimeSpan.FromSeconds(10));
-        using var fallback = new InMemoryStore(permitLimit: 2, window: TimeSpan.FromSeconds(10));
+        var primary = new InMemoryStore(permitLimit: 5, window: TimeSpan.FromSeconds(10));
+        var fallback = new InMemoryStore(permitLimit: 2, window: TimeSpan.FromSeconds(10));
         var storeHealth = new StoreHealth(new StoreHealthOptions());
         var options = new ResilientRateLimiterOptions { FallbackRecoveryTime = TimeSpan.FromMinutes(1) };
         using var limiter = primary.WithResilience(fallback, options, storeHealth);
@@ -308,10 +308,10 @@ internal static class Scenarios
         var options = new ResilientRateLimiterOptions { FallbackRecoveryTime = TimeSpan.FromMinutes(1) };
 
         // snippet: dispose
-        using var primary = new InMemoryStore(permitLimit: 5, window: TimeSpan.FromSeconds(10));
-        using var fallback = new InMemoryStore(permitLimit: 2, window: TimeSpan.FromSeconds(10));
+        var primary = new InMemoryStore(permitLimit: 5, window: TimeSpan.FromSeconds(10));
+        var fallback = new InMemoryStore(permitLimit: 2, window: TimeSpan.FromSeconds(10));
 
-        // Each limiter must be disposed: the store's shared live-partition count only falls on disposal.
+        // The wrapper disposes its primary and fallback, so only the wrapper needs disposing here.
         using var limiter = primary.WithResilience(fallback, options, storeHealth);
         // end-snippet
 
@@ -323,8 +323,8 @@ internal static class Scenarios
     {
         const int StorePermitLimit = 5;
 
-        using var primary = new InMemoryStore(permitLimit: StorePermitLimit, window: TimeSpan.FromSeconds(10));
-        using var fallback = new InMemoryStore(permitLimit: 2, window: TimeSpan.FromSeconds(10));
+        var primary = new InMemoryStore(permitLimit: StorePermitLimit, window: TimeSpan.FromSeconds(10));
+        var fallback = new InMemoryStore(permitLimit: 2, window: TimeSpan.FromSeconds(10));
         var storeHealth = new StoreHealth(new StoreHealthOptions());
         var options = new ResilientRateLimiterOptions { FallbackRecoveryTime = TimeSpan.FromMinutes(1) };
         using var limiter = primary.WithResilience(fallback, options, storeHealth);
@@ -332,8 +332,7 @@ internal static class Scenarios
         var permitCount = 10;
 
         // snippet: permit-count-check
-        // The store rejects an over-limit permit count with ArgumentOutOfRangeException, a programming
-        // error rather than a store failure, so check it here instead of letting the store throw.
+        // ArgumentOutOfRangeException here is a programming error, not a store failure, so check first instead of relying on it.
         if (permitCount > StorePermitLimit)
         {
             Console.WriteLine($"Rejected locally: {permitCount} exceeds the store limit of {StorePermitLimit}.");
@@ -348,7 +347,7 @@ internal static class Scenarios
 
     public static async Task TokenBucketFallback()
     {
-        using var primary = new InMemoryStore(permitLimit: 100, window: TimeSpan.FromMinutes(1));
+        var primary = new InMemoryStore(permitLimit: 100, window: TimeSpan.FromMinutes(1));
         var storeHealth = new StoreHealth(new StoreHealthOptions());
 
         // snippet: token-bucket-fallback
@@ -359,7 +358,7 @@ internal static class Scenarios
         // Rounded up: a bucket that is not exactly full still takes one more period to finish refilling.
         var fallbackRecoveryTime = Math.Ceiling(tokenLimit / (double)tokensPerPeriod) * replenishmentPeriod;
 
-        using var fallback = new TokenBucketRateLimiter(new TokenBucketRateLimiterOptions
+        var fallback = new TokenBucketRateLimiter(new TokenBucketRateLimiterOptions
         {
             TokenLimit = tokenLimit,
             TokensPerPeriod = tokensPerPeriod,
@@ -376,13 +375,13 @@ internal static class Scenarios
 
     public static async Task SlidingWindowFallback()
     {
-        using var primary = new InMemoryStore(permitLimit: 100, window: TimeSpan.FromMinutes(1));
+        var primary = new InMemoryStore(permitLimit: 100, window: TimeSpan.FromMinutes(1));
         var storeHealth = new StoreHealth(new StoreHealthOptions());
 
         // snippet: sliding-window-fallback
         var window = TimeSpan.FromMinutes(1);
 
-        using var fallback = new SlidingWindowRateLimiter(new SlidingWindowRateLimiterOptions
+        var fallback = new SlidingWindowRateLimiter(new SlidingWindowRateLimiterOptions
         {
             PermitLimit = 10,
             Window = window,
@@ -390,8 +389,7 @@ internal static class Scenarios
             QueueLimit = 0,
         });
 
-        // The recovery time is the whole window, not one segment: a caller only fully refills once the
-        // whole window has rolled over.
+        // The recovery time is the whole window, not one segment: a caller only fully refills once the whole window has rolled over.
         var fallbackRecoveryTime = window;
         // end-snippet
 
