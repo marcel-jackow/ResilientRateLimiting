@@ -13,7 +13,17 @@ public static class StoreHealthOptionsExtensions
     /// </summary>
     /// <param name="options">The configuration to add logging to.</param>
     /// <param name="logger">Receives a Warning each time the shared <see cref="StoreHealth"/> reports a failure: the first of each exception type, and again once that type has been quiet for <see cref="StoreHealthOptions.BreakerSamplingDuration"/> or the breaker has closed since it last failed.</param>
-    /// <returns>A new <see cref="StoreHealthOptions"/> with the combined callback.</returns>
+    /// <returns>A new <see cref="StoreHealthOptions"/> with the combined callback. <paramref name="options"/> itself is unchanged.</returns>
+    /// <exception cref="ArgumentNullException"><paramref name="options"/> or <paramref name="logger"/> is <see langword="null"/>.</exception>
+    /// <remarks>
+    /// <para>Call this once per <see cref="StoreHealthOptions"/> instance, right before it is passed to
+    /// <see cref="StoreHealth"/>'s constructor (that is what <see cref="ServiceCollectionExtensions.AddResilientRateLimiting"/>
+    /// does for its store connection). Calling it twice on the same options wraps the callback twice, so each
+    /// failure would be logged twice.</para>
+    /// <para>The message text names only the exception's type; the exception itself is passed to the logger too, so
+    /// a logging provider that renders exception details (message, stack trace) will still show whatever the
+    /// exception carries.</para>
+    /// </remarks>
     public static StoreHealthOptions WithLogging(this StoreHealthOptions options, ILogger logger)
     {
         ArgumentNullException.ThrowIfNull(options);
