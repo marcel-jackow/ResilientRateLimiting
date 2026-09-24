@@ -482,4 +482,101 @@ internal static class Scenarios
         Console.WriteLine($"client-a first: {first.IsAcquired}, client-a second: {second.IsAcquired}, client-b: {other.IsAcquired}");
         // end-snippet
     }
+
+    public static async Task PartitionNoFallback()
+    {
+        var storeHealth = new StoreHealth(new StoreHealthOptions());
+
+        // snippet: partition-no-fallback
+        var options = new ResilientRateLimiterOptions { FailureBehavior = StoreFailureBehavior.FailClosed };
+
+        using var limiter = PartitionedRateLimiter.Create<string, string>(key =>
+            ResilientRateLimitPartition.Get(
+                key,
+                partitionKey => new UnreachableStore(),
+                fallbackFactory: null,
+                options,
+                storeHealth));
+        // end-snippet
+
+        using var lease = await limiter.AcquireAsync("tenant-a", 1);
+        Console.WriteLine($"Allowed: {lease.IsAcquired}");
+    }
+
+    public static async Task StoreHealthTimeProvider()
+    {
+        var primary = new InMemoryStore(permitLimit: 5, window: TimeSpan.FromSeconds(10));
+        var fallback = new InMemoryStore(permitLimit: 2, window: TimeSpan.FromSeconds(10));
+        var options = new ResilientRateLimiterOptions { FallbackRecoveryTime = TimeSpan.FromMinutes(1) };
+
+        // snippet: store-health-time-provider
+        var timeProvider = TimeProvider.System; // tests pass a fake TimeProvider instead
+
+        var storeHealth = new StoreHealth(new StoreHealthOptions(), timeProvider);
+        using var limiter = primary.WithResilience(fallback, options, storeHealth, timeProvider);
+        // end-snippet
+
+        using var lease = await limiter.AcquireAsync(1);
+        Console.WriteLine($"Allowed: {lease.IsAcquired}");
+    }
+
+    public static Task StoreHealthValidate()
+    {
+        // snippet: store-health-validate
+        var invalid = new StoreHealthOptions
+        {
+            FailuresBeforeOpen = 1,
+            BreakerSamplingDuration = TimeSpan.FromMilliseconds(100),
+        };
+
+        try
+        {
+            _ = new StoreHealth(invalid);
+        }
+        catch (InvalidOperationException exception)
+        {
+            Console.WriteLine(exception.Message);
+        }
+        // end-snippet
+
+        return Task.CompletedTask;
+    }
+
+    public static async Task LimiterOptionsAll()
+    {
+        var primary = new InMemoryStore(permitLimit: 5, window: TimeSpan.FromSeconds(10));
+        var fallback = new InMemoryStore(permitLimit: 2, window: TimeSpan.FromSeconds(10));
+        var storeHealth = new StoreHealth(new StoreHealthOptions());
+
+        // snippet: limiter-options-all
+        var options = new ResilientRateLimiterOptions
+        {
+            FailureBehavior = StoreFailureBehavior.LocalFallback,
+            FallbackRecoveryTime = TimeSpan.FromSeconds(10),
+            MaxWarmRetention = TimeSpan.FromMinutes(2),
+            PolicyName = "orders-api",
+            TagMetricsByPartitionKey = false,
+            MaxAddedRetryDelay = TimeSpan.FromSeconds(60),
+        };
+        // end-snippet
+
+        using var limiter = primary.WithResilience(fallback, options, storeHealth);
+        using var lease = await limiter.AcquireAsync(1);
+        Console.WriteLine($"Allowed: {lease.IsAcquired}");
+    }
+
+    public static async Task DisposeAsyncScenario()
+    {
+        var storeHealth = new StoreHealth(new StoreHealthOptions());
+        var options = new ResilientRateLimiterOptions { FallbackRecoveryTime = TimeSpan.FromMinutes(1) };
+        var primary = new InMemoryStore(permitLimit: 5, window: TimeSpan.FromSeconds(10));
+        var fallback = new InMemoryStore(permitLimit: 2, window: TimeSpan.FromSeconds(10));
+
+        // snippet: dispose-async
+        await using var limiter = primary.WithResilience(fallback, options, storeHealth);
+        // end-snippet
+
+        using var lease = await limiter.AcquireAsync(1);
+        Console.WriteLine($"Allowed: {lease.IsAcquired}");
+    }
 }

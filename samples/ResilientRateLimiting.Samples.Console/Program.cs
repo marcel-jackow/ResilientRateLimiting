@@ -33,6 +33,11 @@ await Run("dispose", Scenarios.DisposeScenario);
 await Run("permit-count-check", Scenarios.PermitCountCheck);
 await Run("token-bucket-fallback", Scenarios.TokenBucketFallback);
 await Run("sliding-window-fallback", Scenarios.SlidingWindowFallback);
+await Run("partition-no-fallback", Scenarios.PartitionNoFallback);
+await Run("store-health-time-provider", Scenarios.StoreHealthTimeProvider);
+await Run("store-health-validate", Scenarios.StoreHealthValidate);
+await Run("limiter-options-all", Scenarios.LimiterOptionsAll);
+await Run("dispose-async", Scenarios.DisposeAsyncScenario);
 
 return;
 
