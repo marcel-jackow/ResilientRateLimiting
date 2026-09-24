@@ -14,7 +14,7 @@ With this library: a request that would wait on a slow store instead waits at mo
 
 ## Is it for me?
 
-This library is for **overload protection**: limits measured in seconds to minutes, shared across replicas through a store such as Redis. It is not for daily or monthly quotas, or anything billing depends on — those must survive restarts and need an audit trail, so keep them in your business database instead. See [Which limiter should I use?](documentation/01-concepts.md#which-limiter-should-i-use) for the full comparison.
+This library is for **overload protection**: limits measured in seconds to minutes, shared across replicas through a store such as Redis. It is not for daily or monthly quotas, or anything billing depends on — those must survive restarts and need an audit trail, so keep them in your business database instead. See [Which limiter should I use?](https://github.com/marcel-jackow/ResilientRateLimiting/blob/main/documentation/01-concepts.md#which-limiter-should-i-use) for the full comparison.
 
 | Option | Pick it when |
 |---|---|
