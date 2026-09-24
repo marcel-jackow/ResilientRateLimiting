@@ -8,7 +8,7 @@ This page is about watching the library from outside: the metrics it records, th
 
 **What goes wrong without it.** An outage on the shared store can run for hours before anyone notices, because nothing failed loudly — clients kept getting responses, just from a less accurate counter. By the time someone notices (a burst of complaints about inconsistent limits between replicas), the outage is long over and there is no record of when it started or how often it has happened since.
 
-**What the library does.** Every [`ResilientRateLimiter`](03-api-reference.md#resilientratelimiter) records two counters on one [`Meter`](https://learn.microsoft.com/dotnet/api/system.diagnostics.metrics.meter), named by the constant [`ResilientRateLimiter.MeterName`](03-api-reference.md#metername) (`"ResilientRateLimiting"`). Subscribe to it through [OpenTelemetry](01-concepts.md#glossary)'s `AddMeter`, or through any other listener built on `System.Diagnostics.Metrics`:
+**What the library does.** Every [`ResilientRateLimiter`](03-api-reference.md#resilientratelimiter) records two counters on one [`Meter`](https://learn.microsoft.com/dotnet/api/system.diagnostics.metrics.meter), named by the constant [`ResilientRateLimiter.MeterName`](03-api-reference.md#metername) (`"ResilientRateLimiting"`). Subscribe to it through OpenTelemetry (an open standard and set of libraries for collecting metrics, logs, and traces)'s `AddMeter`, or through any other listener built on `System.Diagnostics.Metrics`:
 
 <!-- snippet: web-meter -->
 ```csharp
@@ -25,7 +25,7 @@ Both counters are `Counter<long>`, meaning they only ever go up; you read rates 
 | `policy` | the [`PolicyName`](04-configuration.md#policyname) you set | Which policy produced this lease. |
 | `outcome` | `allowed`, `limited` | Whether the request got the permit it asked for. |
 | `source` | `distributed`, `local_fallback`, `fail_open`, `fail_closed`, `recovery` | Which path answered. See [`LeaseSource`](03-api-reference.md#leasesource) and [Reading the source in your own code](#reading-the-source-in-your-own-code) below. |
-| `partition_key` | the partition's key, as text | Present only when [`TagMetricsByPartitionKey`](04-configuration.md#tagmetricsbypartitionkey-and-partitionkey) is `true`. |
+| `partition_key` | the partition's key, as text | Present only when [`TagMetricsByPartitionKey`](04-configuration.md#tagmetricsbypartitionkey-and-partitionkey) is `true` and `PartitionKey` has a value. |
 
 Unit: `{lease}` (a UCUM annotation meaning "count of leases", not a physical unit).
 
@@ -58,7 +58,7 @@ An example, in words rather than a specific query language, so it stays useful w
 **What the library does.** [`StoreHealthOptions.OnStoreFailure`](03-api-reference.md#storehealthoptions) is a callback you can set to be told about store failures directly. It is not called on every single failure — that would flood your logs during a long outage with the same exception, over and over. Instead, [`StoreHealth`](03-api-reference.md#storehealth) reports:
 
 - the **first** store failure of each distinct exception type it sees, always;
-- **again**, once that same exception type has gone quiet for at least [`BreakerSamplingDuration`](04-configuration.md#failuresbeforeopen-and-failureratio) (no further failure of that type in that window), or once the circuit breaker has closed since the type was last reported — whichever happens first.
+- **again**, once that same exception type has gone quiet for at least [`BreakerSamplingDuration`](04-configuration.md#breakersamplingduration) (no further failure of that type in that window), or once the circuit breaker has closed since the type was last reported — whichever happens first.
 
 A steady stream of the same exception type, while the breaker stays open, is reported once and then left alone until one of those two conditions is met. A different exception type — say a timeout followed later by a connection failure — is reported the first time each type appears, independently of the other.
 
