@@ -95,7 +95,11 @@ internal static partial class DocumentationSnippets
                 throw new InvalidOperationException($"Snippet '{name}' in {path} has no '// end-snippet'.");
             }
 
-            regions[name] = Normalise(lines[(i + 1)..end]);
+            if (!regions.TryAdd(name, Normalise(lines[(i + 1)..end])))
+            {
+                throw new InvalidOperationException($"Snippet '{name}' is defined twice in {path}.");
+            }
+
             i = end;
         }
 
@@ -117,6 +121,13 @@ internal static partial class DocumentationSnippets
             }
 
             var close = Array.FindIndex(lines, i + 1, line => line.Trim() == "```");
+
+            if (close < 0)
+            {
+                errors.Add($"{path}:{i + 1}: code block is never closed.");
+                break;
+            }
+
             var block = Normalise(lines[(i + 1)..close]);
             var markerLine = i - 1;
 

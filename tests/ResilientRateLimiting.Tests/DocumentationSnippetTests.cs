@@ -75,6 +75,51 @@ public class DocumentationSnippetTests
     }
 
     [Fact]
+    public void Reports_a_code_block_that_is_never_closed()
+    {
+        var doc = "<!-- snippet: demo -->\n```csharp\nvar x = 1;\n";
+        var regions = new Dictionary<string, string> { ["demo"] = "var x = 1;" };
+
+        var errors = DocumentationSnippets.CheckDocument(doc, "page.md", regions);
+
+        Assert.Single(errors);
+        Assert.Contains("never closed", errors[0]);
+    }
+
+    [Fact]
+    public void Reports_a_region_name_used_twice_in_one_file()
+    {
+        var source = "// snippet: demo\nvar x = 1;\n// end-snippet\n// snippet: demo\nvar y = 2;\n// end-snippet\n";
+
+        var error = Assert.Throws<InvalidOperationException>(
+            () => DocumentationSnippets.ReadRegions(source, "A.cs"));
+
+        Assert.Contains("demo", error.Message);
+        Assert.Contains("A.cs", error.Message);
+    }
+
+    [Fact]
+    public void Reports_a_snippet_name_used_in_two_sample_files()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "drl-snippet-test-" + Guid.NewGuid());
+        var samples = Path.Combine(root, "samples");
+        Directory.CreateDirectory(samples);
+        File.WriteAllText(Path.Combine(samples, "A.cs"), "// snippet: demo\nvar x = 1;\n// end-snippet\n");
+        File.WriteAllText(Path.Combine(samples, "B.cs"), "// snippet: demo\nvar y = 2;\n// end-snippet\n");
+
+        try
+        {
+            var errors = DocumentationSnippets.FindErrors(root);
+
+            Assert.Contains(errors, error => error.Contains("demo"));
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Fact]
     public void Every_code_block_in_the_documentation_is_quoted_from_a_sample()
     {
         var errors = DocumentationSnippets.FindErrors(DocumentationSnippets.FindRepoRoot());
