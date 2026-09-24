@@ -4,7 +4,7 @@ Resilience for distributed rate limiting: a timeout, a circuit breaker, and a lo
 
 ## What it is
 
-`ResilientRateLimiting` is a decorator over any [`RateLimiter`](https://learn.microsoft.com/en-us/dotnet/api/system.threading.ratelimiting.ratelimiter) whose count lives in a shared store, such as Redis. It counts nothing itself. The counting comes from a store-backed limiter, for example the `RedisRateLimiting` NuGet package, which this project tests against. What this library adds is what happens when that store is slow or unreachable: a short timeout, a circuit breaker, and a choice of what to do while the store cannot answer.
+`ResilientRateLimiting` is a decorator (a wrapper that adds behaviour around an object without changing how you call it) over any [`RateLimiter`](https://learn.microsoft.com/en-us/dotnet/api/system.threading.ratelimiting.ratelimiter) whose count lives in a shared store, such as Redis. It counts nothing itself. The counting comes from a store-backed limiter, for example the `RedisRateLimiting` NuGet package, which this project tests against. What this library adds is what happens when that store is slow or unreachable: a short timeout, a circuit breaker, and a choice of what to do while the store cannot answer.
 
 ## The problem in 30 seconds
 

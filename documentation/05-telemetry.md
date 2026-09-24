@@ -158,4 +158,4 @@ The example above sends the header only to callers connecting from the loopback 
 
 The same rule applies beyond this library's own metrics: before adding a tag to any metric, ask whether its set of possible values is small and fixed, or grows with your traffic. Only the first kind belongs on a metric tag.
 
-Next: [06-production.md](06-production.md) — running this in production: dashboards, dependency and readiness checks, and what to watch during an outage.
+Next: [06-production.md](06-production.md) — running this in production: Redis eviction and memory, timeouts, restarts during an outage, and what to watch.
