@@ -407,10 +407,11 @@ From `samples/ResilientRateLimiting.Samples.Console/Scenarios.cs`
 | Exception | When | Exact cause |
 |---|---|---|
 | `ArgumentNullException` | at the call | `primaryFactory`, `options` or `storeHealth` is `null`. |
-| `ArgumentNullException` | at the first request for a key | `fallbackFactory` is `null` while `FailureBehavior` is `LocalFallback`. |
+| `ArgumentNullException` | at the first request for a key | `fallbackFactory` is `null`, or returns `null`, while `FailureBehavior` is `LocalFallback`. |
+| `ArgumentException` | at the first request for a key | `fallbackFactory` returns a `ConcurrencyLimiter`, which cannot be a fallback. |
 | `InvalidOperationException` | at the first request for a key | `options` fails `Validate()`. |
 
-The last two come late because the wrapper is built only when a key is first used. To fail at startup instead, call `options.Validate()` yourself when the app starts.
+The last three come late because the wrapper is built only when a key is first used. To fail at startup instead, call `options.Validate()` yourself when the app starts.
 
 **Variation: with a fallback factory.**
 

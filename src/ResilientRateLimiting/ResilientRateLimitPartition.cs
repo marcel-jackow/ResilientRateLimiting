@@ -15,6 +15,15 @@ public static class ResilientRateLimitPartition
     /// <param name="timeProvider">Defaults to <see cref="TimeProvider.System"/>.</param>
     /// <returns>A partition usable with <c>PartitionedRateLimiter.Create</c> or an ASP.NET Core policy.</returns>
     /// <exception cref="ArgumentNullException"><paramref name="primaryFactory"/>, <paramref name="options"/>, or <paramref name="storeHealth"/> is <see langword="null"/>.</exception>
+    /// <remarks>
+    /// The wrapper for a key is built only when that key is first used, so these come later, from the first request
+    /// for a key, not from this call: <see cref="ArgumentNullException"/> when <paramref name="fallbackFactory"/> is
+    /// <see langword="null"/> or returns <see langword="null"/> while <paramref name="options"/> needs a local fallback;
+    /// <see cref="ArgumentException"/> when it returns a <see cref="ConcurrencyLimiter"/>; and
+    /// <see cref="InvalidOperationException"/> when <paramref name="options"/> fails
+    /// <see cref="ResilientRateLimiterOptions.Validate"/>. To fail at startup instead, call <c>options.Validate()</c> when
+    /// the app starts.
+    /// </remarks>
     /// <example>
     /// <code>
     /// var limiter = PartitionedRateLimiter.Create&lt;HttpContext, string&gt;(context =>
