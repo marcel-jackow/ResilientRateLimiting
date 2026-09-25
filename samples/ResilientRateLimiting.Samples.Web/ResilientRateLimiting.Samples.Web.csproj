@@ -7,6 +7,8 @@
     <PackageReference Include="StackExchange.Redis" />
     <!-- Sample-only: exports the meter to the console for this demo. Never a library dependency. -->
     <PackageReference Include="OpenTelemetry.Extensions.Hosting" />
+    <!-- Sample-only: sends metrics and logs to the Aspire dashboard when the demo rig runs it. -->
+    <PackageReference Include="OpenTelemetry.Exporter.OpenTelemetryProtocol" />
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="../../src/ResilientRateLimiting.AspNetCore/ResilientRateLimiting.AspNetCore.csproj" />

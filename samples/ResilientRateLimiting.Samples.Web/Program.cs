@@ -1,4 +1,5 @@
 using Microsoft.AspNetCore.RateLimiting;
+using OpenTelemetry;
 using OpenTelemetry.Metrics;
 using RedisRateLimiting;
 using ResilientRateLimiting;
@@ -129,6 +130,12 @@ builder.Services.AddRateLimiter(limiterOptions =>
 // snippet: web-meter
 builder.Services.AddOpenTelemetry().WithMetrics(metrics => metrics.AddMeter(ResilientRateLimiter.MeterName));
 // end-snippet
+
+// Only under the Aspire demo rig, which sets this variable.
+if (!string.IsNullOrEmpty(builder.Configuration["OTEL_EXPORTER_OTLP_ENDPOINT"]))
+{
+    builder.Services.AddOpenTelemetry().WithLogging().UseOtlpExporter();
+}
 
 var app = builder.Build();
 
