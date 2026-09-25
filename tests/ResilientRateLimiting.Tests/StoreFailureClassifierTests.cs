@@ -53,4 +53,24 @@ public class StoreFailureClassifierTests
         Assert.True(StoreFailureClassifier.IsStoreFailure(new InvalidOperationException(), shouldHandle));
         Assert.False(StoreFailureClassifier.IsStoreFailure(new IOException(), shouldHandle));
     }
+
+    [Fact]
+    public void A_caller_predicate_cannot_excuse_the_library_timeout() =>
+        Assert.True(StoreFailureClassifier.IsStoreFailure(new TimeoutRejectedException(), _ => false));
+
+    [Fact]
+    public void A_caller_predicate_cannot_excuse_the_open_breaker() =>
+        Assert.True(StoreFailureClassifier.IsStoreFailure(new BrokenCircuitException(), _ => false));
+
+    [Fact]
+    public void A_caller_predicate_still_decides_for_store_exceptions()
+    {
+        Assert.False(StoreFailureClassifier.IsStoreFailure(new InvalidDataException(), _ => false));
+        Assert.True(StoreFailureClassifier.IsStoreFailure(new InvalidDataException(), _ => true));
+    }
+
+    [Fact]
+    public void The_library_timeout_does_not_derive_from_operation_cancelled() =>
+        // Guards the check order above: if Polly ever changes this, the timeout check must move before the cancellation check.
+        Assert.False(typeof(TimeoutRejectedException).IsSubclassOf(typeof(OperationCanceledException)));
 }

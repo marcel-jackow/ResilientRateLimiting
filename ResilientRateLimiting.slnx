@@ -3,6 +3,13 @@
     <Project Path="src/ResilientRateLimiting/ResilientRateLimiting.csproj" />
     <Project Path="src/ResilientRateLimiting.AspNetCore/ResilientRateLimiting.AspNetCore.csproj" />
   </Folder>
+  <Folder Name="/benchmarks/">
+    <Project Path="benchmarks/ResilientRateLimiting.Measurements/ResilientRateLimiting.Measurements.csproj" />
+  </Folder>
+  <Folder Name="/samples/">
+    <Project Path="samples/ResilientRateLimiting.Samples.Console/ResilientRateLimiting.Samples.Console.csproj" />
+    <Project Path="samples/ResilientRateLimiting.Samples.Web/ResilientRateLimiting.Samples.Web.csproj" />
+  </Folder>
   <Folder Name="/tests/">
     <Project Path="tests/ResilientRateLimiting.AspNetCore.Tests/ResilientRateLimiting.AspNetCore.Tests.csproj" />
     <Project Path="tests/ResilientRateLimiting.IntegrationTests/ResilientRateLimiting.IntegrationTests.csproj" />

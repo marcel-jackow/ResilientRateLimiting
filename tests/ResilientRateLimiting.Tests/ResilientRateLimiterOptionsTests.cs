@@ -86,4 +86,45 @@ public class ResilientRateLimiterOptionsTests
         Assert.Contains(nameof(ResilientRateLimiterOptions.MaxWarmRetention), error.Message);
         Assert.Contains(nameof(ResilientRateLimiterOptions.MaxAddedRetryDelay), error.Message);
     }
+
+    [Fact]
+    public void Accepts_a_fallback_recovery_time_of_exactly_one_day()
+    {
+        (Valid() with { FallbackRecoveryTime = TimeSpan.FromDays(1) }).Validate();
+    }
+
+    [Fact]
+    public void Rejects_a_fallback_recovery_time_just_above_one_day()
+    {
+        var options = Valid() with { FallbackRecoveryTime = TimeSpan.FromDays(1) + TimeSpan.FromTicks(1) };
+
+        var error = Assert.Throws<InvalidOperationException>(options.Validate);
+        Assert.Contains(nameof(ResilientRateLimiterOptions.FallbackRecoveryTime), error.Message);
+    }
+
+    [Fact]
+    public void Rejects_the_largest_possible_fallback_recovery_time()
+    {
+        var options = Valid() with { FallbackRecoveryTime = TimeSpan.MaxValue };
+
+        Assert.Throws<InvalidOperationException>(options.Validate);
+    }
+
+    [Fact]
+    public void Rejects_a_huge_fallback_recovery_time_even_when_the_fallback_is_not_used()
+    {
+        var options = new ResilientRateLimiterOptions
+        {
+            FailureBehavior = StoreFailureBehavior.FailClosed,
+            FallbackRecoveryTime = TimeSpan.MaxValue,
+        };
+
+        Assert.Throws<InvalidOperationException>(options.Validate);
+    }
+
+    [Fact]
+    public void Exposes_the_upper_bound_as_one_day()
+    {
+        Assert.Equal(TimeSpan.FromDays(1), ResilientRateLimiterOptions.MaxFallbackRecoveryTime);
+    }
 }

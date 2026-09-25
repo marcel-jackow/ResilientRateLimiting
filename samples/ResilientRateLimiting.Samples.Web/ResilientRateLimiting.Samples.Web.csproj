@@ -1,0 +1,14 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+  <PropertyGroup>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="RedisRateLimiting" />
+    <PackageReference Include="StackExchange.Redis" />
+    <!-- Sample-only: exports the meter to the console for this demo. Never a library dependency. -->
+    <PackageReference Include="OpenTelemetry.Extensions.Hosting" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="../../src/ResilientRateLimiting.AspNetCore/ResilientRateLimiting.AspNetCore.csproj" />
+  </ItemGroup>
+</Project>

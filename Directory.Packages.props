@@ -13,5 +13,6 @@
     <PackageVersion Include="RedisRateLimiting" Version="1.2.1" />
     <PackageVersion Include="StackExchange.Redis" Version="2.9.11" />
     <PackageVersion Include="Testcontainers.Redis" Version="4.15.0" />
+    <PackageVersion Include="OpenTelemetry.Extensions.Hosting" Version="1.19.1" />
   </ItemGroup>
 </Project>

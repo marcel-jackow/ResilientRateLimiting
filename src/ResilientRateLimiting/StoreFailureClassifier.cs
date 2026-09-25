@@ -18,6 +18,12 @@ internal static class StoreFailureClassifier
             return false;
         }
 
+        // The library's own cutoffs always count as store failures, even under a caller predicate.
+        if (exception is TimeoutRejectedException or BrokenCircuitException)
+        {
+            return true;
+        }
+
         if (shouldHandle is not null)
         {
             return shouldHandle(exception);
@@ -25,9 +31,6 @@ internal static class StoreFailureClassifier
 
         return exception switch
         {
-            TimeoutRejectedException => true,
-            BrokenCircuitException => true,
-
             // Below the store-failure cases: the remaining programming errors reach the caller.
             ArgumentException => false,
             ObjectDisposedException => false,
