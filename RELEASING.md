@@ -14,12 +14,28 @@ These do **not** release anything:
 - a Release saved as a draft;
 - a merge to `main`.
 
+## One-time setup
+
+Do this **before the first Release**. The workflow only names the environment `release`; the approval comes from the environment's settings. If a Release is published while the environment does not exist, GitHub creates it with no rules, and the packages go to nuget.org **without** waiting for approval.
+
+1. **nuget.org account.** Sign in at nuget.org with a Microsoft account and choose a username (it is shown as the package owner). In **Account settings**, turn on two-factor authentication and the email notification for published packages.
+2. **Trusted-publishing policy on nuget.org.** Your username → **Trusted Publishing** → add a policy: repository owner `marcel-jackow`, repository `ResilientRateLimiting`, workflow file `ci.yml` (the file name only), environment `release`.
+3. **Environment `release` on GitHub.** Settings → Environments → `release`:
+   - **Required reviewers:** the maintainer. Leave "Prevent self-review" off, so the maintainer can approve their own release.
+   - **Deployment branches and tags:** "Selected branches and tags", with one rule for **tags** matching `v*`.
+   - **Environment secret `NUGET_USER`:** the nuget.org username (not the email address). As an environment secret, only the `publish` job can read it.
+4. **Check** under Settings → Environments → `release` that the reviewer and the `v*` tag rule are shown.
+
+The `publish` job uses actions pinned to a commit (the version tag is in a comment next to each). To update one, look up the commit of the new tag and replace both the commit and the comment in the same pull request.
+
 ## Steps
 
 1. **Version.** If the version is new, change `VersionPrefix` in `Directory.Build.props` in a pull request and merge it. The run fails if the tag and `VersionPrefix` differ, so a typo in the tag cannot reach nuget.org. For a pre-release, the tag adds a suffix (for example `v0.2.0-rc.1`) and `VersionPrefix` stays `0.2.0`.
 2. **Create the Release**, with a new tag `v<version>` and target `main`:
    - on the website: **Releases → Draft a new release** → type the tag → "Create new tag on publish" → target `main` → title and notes ("Generate release notes" fills them from the merged pull requests) → **Publish release**;
    - or from the command line: `gh release create v0.2.0 --target main --generate-notes`.
+
+   For a pre-release tag such as `v0.2.0-rc.1`, also tick **Set as a pre-release** on the website, or add `--prerelease` on the command line, so GitHub does not show it as the latest release.
 3. **Approve.** The run pauses before the `publish` job, and GitHub sends an email. Open the run under **Actions**, download the `packages` artifact if you want to look inside, then **Review deployments → Approve**.
 4. **Check.** After a few minutes, both packages show on nuget.org (they are validated first; search can take up to an hour). The Release page has the four package files (`.nupkg` and `.snupkg` for each package).
 

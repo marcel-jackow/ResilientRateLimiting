@@ -98,7 +98,11 @@ function New-FakePackage {
         [string]$DependencyVersion = $Version,
         [string[]]$FrameworkReferences = @(),
         [switch]$NoReadme,
-        [switch]$NoSymbols
+        [switch]$NoSymbols,
+        [switch]$NoDll,
+        [switch]$NoNuspec,
+        [string]$NuspecVersion = $Version,
+        [string]$DependencyFramework = 'net10.0'
     )
     $deps = ($Dependencies | ForEach-Object { "<dependency id=""$_"" version=""$DependencyVersion"" exclude=""Build,Analyzers"" />" }) -join ''
     $frameworks = ($FrameworkReferences | ForEach-Object { "<frameworkReference name=""$_"" />" }) -join ''
@@ -108,17 +112,17 @@ function New-FakePackage {
 <package xmlns="http://schemas.microsoft.com/packaging/2013/05/nuspec.xsd">
   <metadata>
     <id>$Id</id>
-    <version>$Version</version>
+    <version>$NuspecVersion</version>
     $readme
-    <dependencies><group targetFramework="net10.0">$deps</group></dependencies>
+    <dependencies><group targetFramework="$DependencyFramework">$deps</group></dependencies>
     <frameworkReferences><group targetFramework="net10.0">$frameworks</group></frameworkReferences>
   </metadata>
 </package>
 "@
     $zip = [System.IO.Compression.ZipFile]::Open((Join-Path $Dir "$Id.$Version.nupkg"), 'Create')
     try {
-        Add-Entry $zip "$Id.nuspec" $nuspec
-        Add-Entry $zip "lib/net10.0/$Id.dll" 'fake'
+        if (-not $NoNuspec) { Add-Entry $zip "$Id.nuspec" $nuspec }
+        if (-not $NoDll) { Add-Entry $zip "lib/net10.0/$Id.dll" 'fake' }
         if (-not $NoReadme) { Add-Entry $zip 'README.md' '# fake' }
     }
     finally { $zip.Dispose() }
@@ -135,13 +139,17 @@ function New-PackageSet {
         [switch]$AspNetCoreNoFramework,
         [switch]$CoreNoSymbols,
         [switch]$CoreNoReadme,
+        [switch]$CoreNoDll,
+        [switch]$CoreNoNuspec,
+        [string]$CoreNuspecVersion = $Version,
+        [string]$CoreDependencyFramework = 'net10.0',
         [switch]$ThirdPackage
     )
     $dir = Join-Path $root $Name
     New-Item -ItemType Directory -Path $dir | Out-Null
     $coreDeps = @('Polly.Core', 'System.Threading.RateLimiting')
     if ($CoreExtraDependency) { $coreDeps += 'StackExchange.Redis' }
-    New-FakePackage -Dir $dir -Id 'ResilientRateLimiting' -Version $Version -Dependencies $coreDeps -NoSymbols:$CoreNoSymbols -NoReadme:$CoreNoReadme
+    New-FakePackage -Dir $dir -Id 'ResilientRateLimiting' -Version $Version -Dependencies $coreDeps -NoSymbols:$CoreNoSymbols -NoReadme:$CoreNoReadme -NoDll:$CoreNoDll -NoNuspec:$CoreNoNuspec -NuspecVersion $CoreNuspecVersion -DependencyFramework $CoreDependencyFramework
     $coreVersion = if ($AspNetCoreWrongCoreVersion) { '0.0.9' } else { $Version }
     $frameworks = if ($AspNetCoreNoFramework) { @() } else { @('Microsoft.AspNetCore.App') }
     New-FakePackage -Dir $dir -Id 'ResilientRateLimiting.AspNetCore' -Version $Version -Dependencies @('ResilientRateLimiting') -DependencyVersion $coreVersion -FrameworkReferences $frameworks
@@ -176,6 +184,18 @@ Test-Case 'a third package fails' {
 }
 Test-Case 'packages with another version than asked fail' {
     Assert-Fails (Test-Packages (New-PackageSet 'other-version') '0.1.0-ci.2') 'Missing ResilientRateLimiting.0.1.0-ci.2.nupkg'
+}
+Test-Case 'a nuspec version different from the file name fails' {
+    Assert-Fails (Test-Packages (New-PackageSet 'nuspec-version' -CoreNuspecVersion '0.0.1')) "nuspec version is '0.0.1'"
+}
+Test-Case 'a package without its dll fails' {
+    Assert-Fails (Test-Packages (New-PackageSet 'no-dll' -CoreNoDll)) 'lib/net10.0/ResilientRateLimiting.dll is missing'
+}
+Test-Case 'a dependency group for another framework fails' {
+    Assert-Fails (Test-Packages (New-PackageSet 'other-framework' -CoreDependencyFramework 'net8.0')) "dependency group for 'net8.0'"
+}
+Test-Case 'a package without its nuspec fails' {
+    Assert-Fails (Test-Packages (New-PackageSet 'no-nuspec' -CoreNoNuspec)) 'no ResilientRateLimiting.nuspec in the package'
 }
 
 # --- end ---

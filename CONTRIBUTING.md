@@ -59,7 +59,9 @@ dotnet run -c Release --project benchmarks/ResilientRateLimiting.Measurements --
 
 If a change could move one of these numbers (for example, a change to what `StoreHealth` stores per partition, or to the request path), rerun the affected mode and update `documentation/measurements.md` with the new numbers and the setup they were measured under.
 
-## Building a release package
+## Packing locally
+
+This is for looking at a package on your own machine. Real releases are made by CI; see [RELEASING.md](RELEASING.md).
 
 ```bash
 dotnet pack src/ResilientRateLimiting -c Release -o ./artifacts -p:ContinuousIntegrationBuild=true
