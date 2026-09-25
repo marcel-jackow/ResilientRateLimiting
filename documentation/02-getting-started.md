@@ -6,7 +6,7 @@ This page is a walk from an empty console app to an ASP.NET Core app with Redis.
 
 You need:
 
-- **.NET 10** or later. The packages target `net10.0`, and the samples use the .NET 10 SDK.
+- **.NET 10** or later. The packages target `net10.0`, and to run the samples from this repository you need the .NET 10 SDK, version 10.0.401 or later (its `global.json` asks for it).
 - **Docker**, to run Redis. You do not need it until [Step 4](#step-4-an-aspnet-core-app-with-redis); steps 1 to 3 use small in-process stand-ins for a store, so they need no Docker and no network.
 
 The three packages you will add to a real project:

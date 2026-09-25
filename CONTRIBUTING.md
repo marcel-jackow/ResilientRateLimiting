@@ -2,7 +2,7 @@
 
 ## Setup
 
-You need the **.NET 10 SDK**. To run the integration tests you also need **Docker**: they use [Testcontainers](https://testcontainers.com/) to start a real Redis.
+You need the **.NET 10 SDK, version 10.0.401 or later** (`global.json` asks for it; an older 10.0 SDK refuses to build this repository). To run the integration tests you also need **Docker**: they use [Testcontainers](https://testcontainers.com/) to start a real Redis.
 
 Build with warnings as errors, the same way CI does:
 
@@ -89,7 +89,7 @@ A `git push` of a tag alone does not release anything; only a published Release 
 
 nuget.org never deletes a version, and a version number can be used only once. If a run fails before the push, delete the Release and its tag, fix the cause, and create the Release again.
 
-**SDK and target framework.** `global.json` pins the .NET SDK; CI moves to a new major SDK only when a pull request changes that file. The packages target the oldest supported .NET (today `net10.0`). A new .NET release does not change the target: a `net10.0` package also works in projects on newer .NET. Add a newer target only when the code needs an API from it, and remove `net10.0` only after .NET 10 is out of support, because removing a target breaks the projects that use it.
+**SDK and target framework.** `global.json` pins the .NET SDK; CI moves to a new major SDK only when a pull request changes that file. The packages target `net10.0` only. A new .NET release does not change the target: a `net10.0` package also works in projects on newer .NET. Add a newer target only when the code needs an API from it, and remove `net10.0` only after .NET 10 is out of support, because removing a target breaks the projects that use it.
 
 ## Before you send a change
 
