@@ -1,0 +1,127 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  release:
+    types: [published]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  DOTNET_NOLOGO: true
+  DOTNET_CLI_TELEMETRY_OPTOUT: true
+
+jobs:
+  build-test:
+    name: build-test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-dotnet@v6
+        with:
+          global-json-file: global.json
+
+      - name: Build
+        run: dotnet build ResilientRateLimiting.slnx -c Release -warnaserror
+
+      - name: Test (unit, ASP.NET Core, integration with Redis in Docker)
+        run: dotnet test ResilientRateLimiting.slnx -c Release --no-build
+
+  pack:
+    name: pack
+    needs: build-test
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-dotnet@v6
+        with:
+          global-json-file: global.json
+
+      - name: Test the build scripts
+        shell: pwsh
+        run: ./build/Test-BuildScripts.ps1
+
+      - name: Check that the release commit is on main
+        if: github.event_name == 'release'
+        run: |
+          if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
+            echo "::error::Release $GITHUB_REF_NAME points to $GITHUB_SHA, which is not on main. Delete this release and its tag, then create it again with target main."
+            exit 1
+          fi
+
+      - name: Compute the version
+        id: version
+        shell: pwsh
+        run: |
+          $version = ./build/Get-PackageVersion.ps1
+          "version=$version" >> $env:GITHUB_OUTPUT
+          Write-Host "Package version: $version"
+
+      - name: Pack
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          dotnet pack src/ResilientRateLimiting -c Release -o artifacts -p:Version="$VERSION"
+          dotnet pack src/ResilientRateLimiting.AspNetCore -c Release -o artifacts -p:Version="$VERSION"
+
+      - name: Check the packages
+        shell: pwsh
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: ./build/Test-Packages.ps1 -Version $env:VERSION -ArtifactsPath artifacts
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: packages
+          path: artifacts/
+          if-no-files-found: error
+
+  publish:
+    name: publish
+    needs: pack
+    if: github.event_name == 'release'
+    runs-on: ubuntu-latest
+    environment: release
+    permissions:
+      contents: write
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: packages
+          path: artifacts
+
+      - uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Log in to nuget.org (short-lived key through trusted publishing)
+        id: login
+        uses: NuGet/login@v1
+        with:
+          user: ${{ secrets.NUGET_USER }}
+
+      - name: Push to nuget.org
+        env:
+          NUGET_API_KEY: ${{ steps.login.outputs.NUGET_API_KEY }}
+        run: dotnet nuget push "artifacts/*.nupkg" --api-key "$NUGET_API_KEY" --source https://api.nuget.org/v3/index.json --skip-duplicate
+
+      - name: Attach the packages to the GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.event.release.tag_name }}
+        run: gh release upload "$TAG" artifacts/*.nupkg artifacts/*.snupkg --clobber --repo "$GITHUB_REPOSITORY"
