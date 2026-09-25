@@ -81,6 +81,103 @@ Test-Case 'default props path reads the real Directory.Build.props' {
     if ($result.Output -notmatch '^\d+\.\d+\.\d+-ci\.1$') { throw "unexpected version '$($result.Output)'" }
 }
 
+# --- Test-Packages.ps1 ---
+
+function Add-Entry($zip, [string]$name, [string]$content) {
+    $entry = $zip.CreateEntry($name)
+    $writer = [System.IO.StreamWriter]::new($entry.Open())
+    try { $writer.Write($content) } finally { $writer.Dispose() }
+}
+
+function New-FakePackage {
+    param(
+        [string]$Dir,
+        [string]$Id,
+        [string]$Version,
+        [string[]]$Dependencies = @(),
+        [string]$DependencyVersion = $Version,
+        [string[]]$FrameworkReferences = @(),
+        [switch]$NoReadme,
+        [switch]$NoSymbols
+    )
+    $deps = ($Dependencies | ForEach-Object { "<dependency id=""$_"" version=""$DependencyVersion"" exclude=""Build,Analyzers"" />" }) -join ''
+    $frameworks = ($FrameworkReferences | ForEach-Object { "<frameworkReference name=""$_"" />" }) -join ''
+    $readme = if ($NoReadme) { '' } else { '<readme>README.md</readme>' }
+    $nuspec = @"
+<?xml version="1.0" encoding="utf-8"?>
+<package xmlns="http://schemas.microsoft.com/packaging/2013/05/nuspec.xsd">
+  <metadata>
+    <id>$Id</id>
+    <version>$Version</version>
+    $readme
+    <dependencies><group targetFramework="net10.0">$deps</group></dependencies>
+    <frameworkReferences><group targetFramework="net10.0">$frameworks</group></frameworkReferences>
+  </metadata>
+</package>
+"@
+    $zip = [System.IO.Compression.ZipFile]::Open((Join-Path $Dir "$Id.$Version.nupkg"), 'Create')
+    try {
+        Add-Entry $zip "$Id.nuspec" $nuspec
+        Add-Entry $zip "lib/net10.0/$Id.dll" 'fake'
+        if (-not $NoReadme) { Add-Entry $zip 'README.md' '# fake' }
+    }
+    finally { $zip.Dispose() }
+    if (-not $NoSymbols) { Set-Content -LiteralPath (Join-Path $Dir "$Id.$Version.snupkg") -Value 'fake' }
+}
+
+# Builds a valid pair of packages; the switches break one thing each.
+function New-PackageSet {
+    param(
+        [string]$Name,
+        [string]$Version = '0.1.0-ci.1',
+        [switch]$CoreExtraDependency,
+        [switch]$AspNetCoreWrongCoreVersion,
+        [switch]$AspNetCoreNoFramework,
+        [switch]$CoreNoSymbols,
+        [switch]$CoreNoReadme,
+        [switch]$ThirdPackage
+    )
+    $dir = Join-Path $root $Name
+    New-Item -ItemType Directory -Path $dir | Out-Null
+    $coreDeps = @('Polly.Core', 'System.Threading.RateLimiting')
+    if ($CoreExtraDependency) { $coreDeps += 'StackExchange.Redis' }
+    New-FakePackage -Dir $dir -Id 'ResilientRateLimiting' -Version $Version -Dependencies $coreDeps -NoSymbols:$CoreNoSymbols -NoReadme:$CoreNoReadme
+    $coreVersion = if ($AspNetCoreWrongCoreVersion) { '0.0.9' } else { $Version }
+    $frameworks = if ($AspNetCoreNoFramework) { @() } else { @('Microsoft.AspNetCore.App') }
+    New-FakePackage -Dir $dir -Id 'ResilientRateLimiting.AspNetCore' -Version $Version -Dependencies @('ResilientRateLimiting') -DependencyVersion $coreVersion -FrameworkReferences $frameworks
+    if ($ThirdPackage) { New-FakePackage -Dir $dir -Id 'ResilientRateLimiting.Extra' -Version $Version }
+    $dir
+}
+
+function Test-Packages([string]$dir, [string]$version = '0.1.0-ci.1') {
+    Invoke-Script 'Test-Packages.ps1' @('-Version', $version, '-ArtifactsPath', $dir)
+}
+
+Test-Case 'a valid package pair passes' {
+    Assert-Passes (Test-Packages (New-PackageSet 'valid'))
+}
+Test-Case 'an extra core dependency fails' {
+    Assert-Fails (Test-Packages (New-PackageSet 'extra-dep' -CoreExtraDependency)) 'StackExchange.Redis'
+}
+Test-Case 'AspNetCore depending on another core version fails' {
+    Assert-Fails (Test-Packages (New-PackageSet 'wrong-core-version' -AspNetCoreWrongCoreVersion)) '0.0.9'
+}
+Test-Case 'AspNetCore without the ASP.NET Core framework reference fails' {
+    Assert-Fails (Test-Packages (New-PackageSet 'no-framework' -AspNetCoreNoFramework)) 'Microsoft.AspNetCore.App'
+}
+Test-Case 'a missing symbol package fails' {
+    Assert-Fails (Test-Packages (New-PackageSet 'no-symbols' -CoreNoSymbols)) 'ResilientRateLimiting.0.1.0-ci.1.snupkg'
+}
+Test-Case 'a package without README fails' {
+    Assert-Fails (Test-Packages (New-PackageSet 'no-readme' -CoreNoReadme)) 'README.md'
+}
+Test-Case 'a third package fails' {
+    Assert-Fails (Test-Packages (New-PackageSet 'third' -ThirdPackage)) 'Expected 2 .nupkg'
+}
+Test-Case 'packages with another version than asked fail' {
+    Assert-Fails (Test-Packages (New-PackageSet 'other-version') '0.1.0-ci.2') 'Missing ResilientRateLimiting.0.1.0-ci.2.nupkg'
+}
+
 # --- end ---
 
 Remove-Item -LiteralPath $root -Recurse -Force
