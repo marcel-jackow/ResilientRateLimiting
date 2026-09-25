@@ -205,3 +205,5 @@ if ($failures.Count -gt 0) {
     throw "$($failures.Count) build script test(s) failed."
 }
 Write-Host 'All build script tests passed.'
+# The failure cases leave a non-zero LASTEXITCODE behind; CI's pwsh step exits with it.
+exit 0
