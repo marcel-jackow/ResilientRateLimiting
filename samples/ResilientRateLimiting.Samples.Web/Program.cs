@@ -76,6 +76,7 @@ builder.Services.AddRateLimiter(limiterOptions =>
     // snippet: web-policy
     limiterOptions.AddPolicy("per-client", context =>
     {
+        // Demo only: the caller controls headers. In production, use trusted data such as user claims.
         var clientId = context.Request.Headers["X-Client-Id"].FirstOrDefault() ?? "anonymous";
         var storeHealth = context.RequestServices.GetRequiredService<StoreHealth>();
 
@@ -103,6 +104,7 @@ builder.Services.AddRateLimiter(limiterOptions =>
     // It is captured by this lambda instead, the same way secondaryRedis is.
     limiterOptions.AddPolicy("per-client-secondary", context =>
     {
+        // Demo only: the caller controls headers. In production, use trusted data such as user claims.
         var clientId = context.Request.Headers["X-Client-Id"].FirstOrDefault() ?? "anonymous";
 
         return ResilientRateLimitPartition.Get(

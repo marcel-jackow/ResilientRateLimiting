@@ -21,7 +21,7 @@ dotnet add package ResilientRateLimiting.AspNetCore
 
 These packages are not on nuget.org yet (this library is at version 0.1.0, unpublished). Until the first release, add a project reference to this repository's `src/ResilientRateLimiting` and `src/ResilientRateLimiting.AspNetCore` projects instead of the `dotnet add package` commands above.
 
-This page quotes the two sample projects in this repository: `samples/ResilientRateLimiting.Samples.Console` and `samples/ResilientRateLimiting.Samples.Web`. Clone the repository if you want to run the same commands.
+This page quotes the two sample projects in this repository: `samples/ResilientRateLimiting.Samples.Console` and `samples/ResilientRateLimiting.Samples.Web`. Clone the repository if you want to run the same commands. [samples/README.md](../samples/README.md) lists every scenario in both samples and links each one to the page that explains it.
 
 ## Step 1: a limiter in a console app, no Redis
 
@@ -245,6 +245,7 @@ The connection multiplexer itself (`redis`) is registered as a singleton too, bu
 ```csharp
 limiterOptions.AddPolicy("per-client", context =>
 {
+    // Demo only: the caller controls headers. In production, use trusted data such as user claims.
     var clientId = context.Request.Headers["X-Client-Id"].FirstOrDefault() ?? "anonymous";
     var storeHealth = context.RequestServices.GetRequiredService<StoreHealth>();
 
@@ -268,7 +269,14 @@ limiterOptions.AddPolicy("per-client", context =>
 ```
 From `samples/ResilientRateLimiting.Samples.Web/Program.cs`
 
-`clientId` comes from the `X-Client-Id` request header, falling back to `"anonymous"`; this is the partition key, so each client gets its own primary and fallback pair. `storeHealth` is resolved from DI: the same singleton for every request, so the circuit breaker is shared across clients, as [The circuit breaker](01-concepts.md#the-circuit-breaker) explains it must be. `localPermitLimit` is `LocalBudget.ForReplicas` again, computed once at startup from `rateLimits.PermitLimit` and `rateLimits.TypicalReplicaCount` (34, the same number as [Step 3](#step-3-many-clients--partitions)). `ResilientRateLimiting.AspNetCore`'s `UseResilientDefaults` (set once, above this policy) makes a rejection a 429 response with the lease's `Retry-After` value written as the header, instead of the plain 503 that `AddRateLimiter` gives you by default.
+> **Warning: the `X-Client-Id` header is a demo shortcut, not a production setup.** The caller controls every request header. A caller can send a new value on each request and get a fresh budget every time, so the limit never applies. A caller can also send another client's value and use up that client's budget. In production, take the partition key from data the server trusts, for example a claim of the signed-in user (`context.User`), which your authentication has already checked.
+
+What each part does:
+
+- `clientId` comes from the `X-Client-Id` request header, or `"anonymous"` when the header is missing. It is the partition key, so each client gets its own primary and fallback pair. The header is used here only because it is easy to set with `curl` (see the warning above).
+- `storeHealth` is resolved from DI: the same singleton for every request, so the circuit breaker is shared across clients, as [The circuit breaker](01-concepts.md#the-circuit-breaker) explains it must be.
+- `localPermitLimit` is `LocalBudget.ForReplicas` again, computed once at startup from `rateLimits.PermitLimit` and `rateLimits.TypicalReplicaCount` (34, the same number as [Step 3](#step-3-many-clients--partitions)).
+- `UseResilientDefaults` from `ResilientRateLimiting.AspNetCore` (set once, above this policy) makes a rejection a 429 response instead of the plain 503 that `AddRateLimiter` gives you by default, and writes a `Retry-After` header when the lease carries a retry time.
 
 **Run it.**
 
@@ -287,6 +295,8 @@ for i in $(seq 1 105); do curl -s -o /dev/null -w "%{http_code}\n" -H "X-Client-
     100 200
       5 429
 ```
+
+How to read this. The command sends 105 requests in a loop, all as client `alice`. For each request, `curl` prints only the HTTP status code: `-s` hides the progress bar, `-o /dev/null` throws the response body away, `-w "%{http_code}\n"` prints the status code on its own line, and `-H` sets the `X-Client-Id` header. `sort | uniq -c` then counts how many times each status code appeared. So the output means: **100** requests got **200** (allowed) and **5** requests got **429** (rejected: too many requests). That is exactly the limit of 100 requests per 60 seconds for one client.
 
 A closer look at one allowed and one rejected response:
 
@@ -336,7 +346,7 @@ warn: ResilientRateLimiting.StoreHealth[0]
 Store failure: BrokenCircuitException
 ```
 
-The two `Store failure:` lines are printed by this sample's own `OnStoreFailure` callback (see `Configure` near the top of `Program.cs`); the `warn:` lines above them are this library's own logging, wired up separately for the sample's second Redis connection with `StoreHealthOptions.WithLogging`. Once the breaker is open, requests stop waiting on the timeout at all and answer from the local fallback at once (requests dropped from tens of milliseconds to about a millisecond in this run). A new client, `erin`, gets the fallback's local budget of 34 admitted requests, then a rejection with both the degraded header and a real `Retry-After` this time — the local fallback limiter, unlike RedisRateLimiting, does give one:
+The two `Store failure:` lines are printed by this sample's own `OnStoreFailure` callback (see `Configure` near the top of `Program.cs`); the `warn:` lines above them are this library's own logging, which `AddResilientRateLimiting` attaches to the main Redis connection under the category `ResilientRateLimiting.StoreHealth`. Once the breaker is open, requests stop waiting on the timeout at all and answer from the local fallback at once (requests dropped from tens of milliseconds to about a millisecond in this run). A new client, `erin`, gets the fallback's local budget of 34 admitted requests, then a rejection with both the degraded header and a real `Retry-After` this time — the local fallback limiter, unlike RedisRateLimiting, does give one:
 
 ```text
 $ for i in $(seq 1 40); do curl -s -o /dev/null -w "%{http_code}\n" -H "X-Client-Id: erin" http://localhost:5299/; done | sort | uniq -c
@@ -348,6 +358,8 @@ HTTP/1.1 429 Too Many Requests
 Retry-After: 118
 X-RateLimit-Degraded: true
 ```
+
+The first command is the same loop as before, now with 40 requests as client `erin`: **34** requests got **200** and **6** got **429**. While Redis is down, this replica counts on its own, so `erin` gets the local budget of 34 instead of the shared limit of 100. The second command (`-i` prints the response headers) shows one of those rejections in full.
 
 `X-RateLimit-Degraded: true` comes from `UseResilientDefaults(emitDegradedHeader: ...)`: the sample only adds it for loopback callers (so a health check or an internal caller can see the service is running degraded, without exposing that detail to the public internet).
 

@@ -87,12 +87,22 @@ builder.Services.AddResilientRateLimiting(
 ```
 From `samples/ResilientRateLimiting.Samples.Web/Program.cs`
 
+`UseResilientDefaults`, set once on the middleware options, turns a rejection into a 429 response instead of the plain 503 that `AddRateLimiter` gives by default, and writes a `Retry-After` header when the lease carries a retry time. While Redis is down, the local fallback provides one. When a healthy Redis rejects the request, the 429 has no `Retry-After` header: `RedisRateLimiting`'s limiters do not provide a retry time in the standard form this library reads ([measured](https://github.com/marcel-jackow/ResilientRateLimiting/blob/main/documentation/measurements.md#redisratelimiting-and-the-retry-after-value)). The optional predicate decides, per request, whether to add the `X-RateLimit-Degraded` header; this sample adds it only for local callers:
+
+<!-- snippet: web-degraded-header -->
+```csharp
+limiterOptions.UseResilientDefaults(emitDegradedHeader: context =>
+    context.Connection.RemoteIpAddress is { } remoteIp && IPAddress.IsLoopback(remoteIp));
+```
+From `samples/ResilientRateLimiting.Samples.Web/Program.cs`
+
 A policy supplies the partition and uses `ResilientRateLimitPartition` in place of the built-in partition helpers:
 
 <!-- snippet: web-policy -->
 ```csharp
 limiterOptions.AddPolicy("per-client", context =>
 {
+    // Demo only: the caller controls headers. In production, use trusted data such as user claims.
     var clientId = context.Request.Headers["X-Client-Id"].FirstOrDefault() ?? "anonymous";
     var storeHealth = context.RequestServices.GetRequiredService<StoreHealth>();
 
@@ -116,7 +126,7 @@ limiterOptions.AddPolicy("per-client", context =>
 ```
 From `samples/ResilientRateLimiting.Samples.Web/Program.cs`
 
-`UseResilientDefaults` (set once, alongside the policy) turns a rejection into a 429 response with the `Retry-After` header written from the lease, instead of the plain 503 `AddRateLimiter` gives by default. See [Step 4 of 02-getting-started.md](https://github.com/marcel-jackow/ResilientRateLimiting/blob/main/documentation/02-getting-started.md#step-4-an-aspnet-core-app-with-redis) for the full sample, including configuration and the degraded header.
+The `X-Client-Id` header keeps the sample short. It is not a production setup: the caller controls it, so a caller could pick any partition. In production, take the partition key from data the server trusts, such as the signed-in user's claims. See [Step 4 of 02-getting-started.md](https://github.com/marcel-jackow/ResilientRateLimiting/blob/main/documentation/02-getting-started.md#step-4-an-aspnet-core-app-with-redis) for the full sample, including configuration and the degraded header.
 
 ## Documentation
 
@@ -127,6 +137,7 @@ From `samples/ResilientRateLimiting.Samples.Web/Program.cs`
 - [05-telemetry.md](https://github.com/marcel-jackow/ResilientRateLimiting/blob/main/documentation/05-telemetry.md) — the metrics, the store failure reports, and how your own code can tell which path answered a request.
 - [06-production.md](https://github.com/marcel-jackow/ResilientRateLimiting/blob/main/documentation/06-production.md) — running against a real Redis: memory, timeouts, restarts during an outage, and known limits.
 - [measurements.md](https://github.com/marcel-jackow/ResilientRateLimiting/blob/main/documentation/measurements.md) — the real numbers behind every default this documentation calls **measured**.
+- [samples/README.md](https://github.com/marcel-jackow/ResilientRateLimiting/blob/main/samples/README.md) — the two runnable sample projects: how to run them and what each scenario shows. Every code example in this documentation comes from them.
 
 ## Status
 
