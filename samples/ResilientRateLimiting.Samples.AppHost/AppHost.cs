@@ -45,7 +45,8 @@ ExecuteCommandResult Report(ExecuteCommandContext context, bool success, string 
     return success ? CommandResults.Success(message) : CommandResults.Failure(message);
 }
 
-async Task<ExecuteCommandResult> Restart(ExecuteCommandContext context, IEnumerable<IResource> resources, string done)
+// Aspire reports Running before the app listens, so wait for an answer: the next demo step may stop Redis.
+async Task<ExecuteCommandResult> Restart(ExecuteCommandContext context, IEnumerable<ProjectResource> resources, string done)
 {
     var commands = context.Services.GetRequiredService<ResourceCommandService>();
     foreach (var resource in resources)
@@ -54,6 +55,11 @@ async Task<ExecuteCommandResult> Restart(ExecuteCommandContext context, IEnumera
         if (!result.Success)
         {
             return Report(context, false, $"Restarting {resource.Name} failed: {result.Message}");
+        }
+
+        if (!await traffic.WaitUntilAnswersAsync(new Uri(resource.GetEndpoint("http").Url), TimeSpan.FromSeconds(60), context.CancellationToken))
+        {
+            return Report(context, false, $"{resource.Name} did not answer within 60 seconds after the restart; see its log.");
         }
     }
 

@@ -69,6 +69,22 @@ internal sealed class DemoTraffic
         return (results.Count(s => s == HttpStatusCode.OK), results.Count(s => s == HttpStatusCode.TooManyRequests), results.Count(s => s is not HttpStatusCode.OK and not HttpStatusCode.TooManyRequests));
     }
 
+    public async Task<bool> WaitUntilAnswersAsync(Uri url, TimeSpan timeout, CancellationToken cancellationToken)
+    {
+        var deadline = DateTime.UtcNow + timeout;
+        while (DateTime.UtcNow < deadline)
+        {
+            if (await SendAsync(url, "restart-check", cancellationToken).ConfigureAwait(false) is not null)
+            {
+                return true;
+            }
+
+            await Task.Delay(TimeSpan.FromMilliseconds(250), cancellationToken).ConfigureAwait(false);
+        }
+
+        return false;
+    }
+
     private async Task<HttpStatusCode?> SendAsync(Uri gateway, string clientId, CancellationToken cancellationToken)
     {
         try
