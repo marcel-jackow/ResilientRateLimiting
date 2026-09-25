@@ -2,7 +2,7 @@
 
 ## Setup
 
-You need the **.NET 10 SDK**. To run the integration tests you also need **Docker**: they use [Testcontainers](https://testcontainers.com/) to start a real Redis.
+You need the **.NET SDK that `global.json` names**, or a newer one of the same major version. An older SDK refuses to build this repository. To run the integration tests you also need **Docker**: they use [Testcontainers](https://testcontainers.com/) to start a real Redis.
 
 Build with warnings as errors, the same way CI does:
 
@@ -59,7 +59,9 @@ dotnet run -c Release --project benchmarks/ResilientRateLimiting.Measurements --
 
 If a change could move one of these numbers (for example, a change to what `StoreHealth` stores per partition, or to the request path), rerun the affected mode and update `documentation/measurements.md` with the new numbers and the setup they were measured under.
 
-## Building a release package
+## Packing locally
+
+This is for looking at a package on your own machine. Real releases are made by CI; see [RELEASING.md](RELEASING.md).
 
 ```bash
 dotnet pack src/ResilientRateLimiting -c Release -o ./artifacts -p:ContinuousIntegrationBuild=true
@@ -68,10 +70,24 @@ dotnet pack src/ResilientRateLimiting.AspNetCore -c Release -o ./artifacts -p:Co
 
 `-p:ContinuousIntegrationBuild=true` makes the build deterministic and strips local file paths out of the debug symbols, so two people packing the same commit get byte-identical output, and a symbol file never leaks a path from the machine that built it.
 
+## CI
+
+GitHub Actions runs `.github/workflows/ci.yml`:
+
+- **On every pull request and every push to `main`:** build with warnings as errors, run all three test tiers (the integration tier starts Redis in Docker on the build machine), pack both packages, and check them. The packages are kept as a download on the run's page, with a version like `0.1.0-ci.42`. They are never published.
+- **The package check** (`build/Test-Packages.ps1`) fails the run if a package has a dependency other than the expected ones (`System.Threading.RateLimiting` and `Polly.Core` for the core package; the same-version `ResilientRateLimiting` for the ASP.NET Core package), is missing its symbols or README, or if there are not exactly two packages. `build/Test-BuildScripts.ps1` tests this check and the version script with fake input; run it after changing anything in `build/`:
+
+  ```bash
+  pwsh -NoProfile -File build/Test-BuildScripts.ps1
+  ```
+
+Releases are made by the maintainer; [RELEASING.md](RELEASING.md) describes how.
+
 ## Before you send a change
 
 - `dotnet build ResilientRateLimiting.slnx -warnaserror` is clean.
 - `dotnet test` is green (Docker running, so the integration tier runs too).
+- If you changed anything in `build/`, `pwsh -NoProfile -File build/Test-BuildScripts.ps1` passes.
 - New or changed code that reads the clock takes a `TimeProvider`.
 - New or changed documentation quotes a sample, with a marker, and the snippet test passes.
 - No decision identifiers, employer names, hostnames, tenant claim names, or real limit values anywhere in `src`, `tests`, `samples`, `benchmarks`, `documentation`, `README.md`, or this file.

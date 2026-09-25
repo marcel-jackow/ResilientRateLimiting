@@ -84,15 +84,15 @@ The exception message was "The message timed out in the backlog attempting to se
 
 This section supports `01-concepts.md#retry-after`: does a healthy Redis limiter give a Retry-After value when it rejects?
 
-Setup (2026-09-24, same machine, a script outside this repository): `RedisRateLimiting` 1.2.1 against a `redis:7-alpine` container. For each of `RedisSlidingWindowRateLimiter`, `RedisFixedWindowRateLimiter` and `RedisTokenBucketRateLimiter` with a limit of 1, two `AcquireAsync(1)` calls; the second is rejected, and its metadata is read.
+Setup (2026-09-25, same machine, a script outside this repository): `RedisRateLimiting` 1.2.1 against a `redis:7-alpine` container. For each of `RedisFixedWindowRateLimiter`, `RedisSlidingWindowRateLimiter` and `RedisTokenBucketRateLimiter` with a limit of 1 and a 30-second window or refill period, two `AcquireAsync(1)` calls; the second is rejected. On the rejected lease, the script lists `MetadataNames` and also asks for each name directly with `TryGetMetadata`, because a lease can answer a name it does not list. Two runs, with Redis emptied between them, gave the same results.
 
-| Limiter | Metadata names on the rejected lease | Value under the standard `MetadataName.RetryAfter` |
-|---|---|---|
-| `RedisSlidingWindowRateLimiter` | `RATELIMIT_LIMIT`, `RATELIMIT_REMAINING` | none |
-| `RedisFixedWindowRateLimiter` | `RATELIMIT_LIMIT`, `RATELIMIT_REMAINING`, `RATELIMIT_RETRYAFTER` | none |
-| `RedisTokenBucketRateLimiter` | `RATELIMIT_LIMIT`, `RATELIMIT_REMAINING` | none |
+| Limiter | Metadata names listed on the rejected lease | `TryGetMetadata("RATELIMIT_RETRYAFTER")` | Value under the standard `MetadataName.RetryAfter` |
+|---|---|---|---|
+| `RedisFixedWindowRateLimiter` | `RATELIMIT_LIMIT`, `RATELIMIT_REMAINING`, `RATELIMIT_RETRYAFTER` | an `int`, `30` (whole seconds) | none |
+| `RedisSlidingWindowRateLimiter` | `RATELIMIT_LIMIT`, `RATELIMIT_REMAINING` | not found | none |
+| `RedisTokenBucketRateLimiter` | `RATELIMIT_LIMIT`, `RATELIMIT_REMAINING` | an `int`, `30` (whole seconds; answered, but not listed) | none |
 
-**Measured:** none of the three gives a value under the standard name. The fixed window limiter uses its own name, `RATELIMIT_RETRYAFTER`, which `ResilientRateLimiting` does not read. So a rejection by a healthy Redis carries no Retry-After from this library.
+**Measured:** none of the three gives a value under the standard name. The fixed window and token bucket limiters give a retry value under their own name, `RATELIMIT_RETRYAFTER`. The token bucket answers that name without listing it in `MetadataNames`, so a check that only reads the list does not see it. The sliding window limiter gives no retry value at all. `ResilientRateLimiting` reads only the standard name, so a rejection by a healthy Redis carries no Retry-After from this library.
 
 ## Redis keys, their type and their expiry
 
