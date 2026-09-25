@@ -1,11 +1,12 @@
 # Samples
 
-Two small programs that show the library in use. Every code example in the [documentation](../documentation/) is copied from these files, and a test checks that the copies stay exact, so what you read in the docs is code that builds.
+Two small programs that show the library in use, and a demo rig that runs the web sample three times behind a gateway. Every code example in the [documentation](../documentation/) is copied from these files, and a test checks that the copies stay exact, so what you read in the docs is code that builds.
 
 | Project | What it shows | Needs Redis? |
 |---|---|---|
 | [`ResilientRateLimiting.Samples.Console`](ResilientRateLimiting.Samples.Console/) | Every part of the core package, one short scenario each | Only for the first scenario |
 | [`ResilientRateLimiting.Samples.Web`](ResilientRateLimiting.Samples.Web/) | A minimal ASP.NET Core app with the `ResilientRateLimiting.AspNetCore` package and real Redis | Yes |
+| [`ResilientRateLimiting.Samples.AppHost`](ResilientRateLimiting.Samples.AppHost/) | The [Aspire demo rig](#the-aspire-demo-rig): Redis, three copies of the web sample and a gateway, driven from the Aspire dashboard | Starts its own, in Docker |
 
 You need the .NET SDK that the repository's `global.json` names, or a newer one of the same major version. For Redis, Docker is the easiest way:
 
@@ -90,3 +91,34 @@ The code is in [`Program.cs`](ResilientRateLimiting.Samples.Web/Program.cs), in 
 | `web-meter` | Collecting the library's metrics with OpenTelemetry | [Getting started, Step 5](../documentation/02-getting-started.md#step-5-watch-it) |
 
 [Getting started](../documentation/02-getting-started.md) walks through both samples step by step, with real output.
+
+## The Aspire demo rig
+
+`samples/ResilientRateLimiting.Samples.AppHost` runs the whole story on one machine: Redis, three copies of the web sample (`api-a`, `api-b`, `api-c`) and a gateway in front of them ([`ResilientRateLimiting.Samples.Gateway`](ResilientRateLimiting.Samples.Gateway/)). You need Docker and the [Aspire CLI](https://aspire.dev/get-started/install-cli/). The CLI version must match the Aspire packages the AppHost uses (13.5 or later); an older CLI starts the app but then cannot find it, and `aspire start` ends with "Timeout waiting for AppHost to start". `aspire update --self` updates the CLI.
+
+```bash
+cd samples/ResilientRateLimiting.Samples.AppHost
+aspire run
+```
+
+Open the dashboard link that `aspire run` prints. The demo uses a small limit so each effect shows within seconds: 30 requests per 10 seconds per client, shared by the three APIs. During a Redis outage each API falls back to a local budget of 10.
+
+The gateway resource has these commands (the "…" menu in the dashboard, or `aspire resource gateway <name>` in a second terminal):
+
+| Command | Name | What it does |
+|---|---|---|
+| Start steady load / Stop steady load | `start-load` / `stop-load` | 5 requests per second as client `steady`: more than the limit, so the charts show both allowed and limited |
+| Send burst of 90 | `burst` | 90 requests at once as a new client; the result says how many were allowed, limited and failed |
+| Traffic: even / Traffic: 60/30/10 | `traffic-even` / `traffic-uneven` | restarts the gateway with the chosen shares (60/30/10 sends 60 % to `api-a`, 30 % to `api-b`, 10 % to `api-c`) |
+| Budget: equal share / Budget: as if 2 replicas | `budget-equal` / `budget-2` | restarts the three APIs with a local budget of 10 or 15, and waits until they answer again. Use it while Redis is running: an API cannot start without Redis |
+
+Each command writes its result to the gateway's console log (Console tab in the dashboard, or `aspire logs gateway`). The CLI prints only whether a command worked, plus the reason when it did not.
+
+To stop and start Redis, use the dashboard's own Stop and Start on the `redis` resource, or `aspire resource redis stop` and `aspire resource redis start`.
+
+**A demo in four scenes.** Watch the Metrics tab: `resilient_rate_limiting.leases`, split by the `source` and `outcome` tags.
+
+1. **Shared limit.** Send burst of 90: about 30 allowed, 60 limited. That is one limit for all three APIs, because they count in one Redis. Now and then a few more get through: a store call that takes longer than the 20 ms store timeout counts as a store failure, and that one request is answered from the local budget.
+2. **Redis outage.** Start steady load, then stop `redis`. The `source` changes from `distributed` to `local_fallback`: requests are still answered, and still limited. A burst now gets 30 through, 10 from each API's local budget.
+3. **Recovery.** Start `redis` again. The `source` shows `recovery` for one window (10 seconds), then `distributed`.
+4. **Uneven traffic.** Traffic: 60/30/10, then stop `redis`. A burst now sends 54 requests to `api-a`, 27 to `api-b` and 9 to `api-c`. `api-a` and `api-b` stop at their local budget of 10, and `api-c` gets only 9 requests, so 29 get through: fewer than the shared limit allows. That is safe, but conservative, and the more uneven the traffic, the bigger the gap. Start `redis`, use Budget: as if 2 replicas, and stop `redis` again: now 39 get through (15 + 15 + 9), more than the shared limit of 30. That is the trade-off of sizing the local budget.
