@@ -7,7 +7,7 @@ Two small programs that show the library in use. Every code example in the [docu
 | [`ResilientRateLimiting.Samples.Console`](ResilientRateLimiting.Samples.Console/) | Every part of the core package, one short scenario each | Only for the first scenario |
 | [`ResilientRateLimiting.Samples.Web`](ResilientRateLimiting.Samples.Web/) | A minimal ASP.NET Core app with the `ResilientRateLimiting.AspNetCore` package and real Redis | Yes |
 
-You need the .NET 10 SDK, version 10.0.401 or later (the repository's `global.json` asks for it). For Redis, Docker is the easiest way:
+You need the .NET SDK that the repository's `global.json` names, or a newer one of the same major version. For Redis, Docker is the easiest way:
 
 ```bash
 docker run -d --name rrl-samples-redis -p 6379:6379 redis:7
