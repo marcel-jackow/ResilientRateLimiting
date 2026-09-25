@@ -1,7 +1,6 @@
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
-using ResilientRateLimiting.AspNetCore;
 using Xunit;
 
 namespace ResilientRateLimiting.AspNetCore.Tests;
@@ -29,6 +28,10 @@ public class SampleConfigurationTests
         Assert.Equal(10_000, options.MaxWarmPartitions);
         Assert.Equal(1.0, options.ColdStartFallbackFactor);
         Assert.NotNull(provider.GetRequiredService<StoreHealth>());
+
+        // The sample's values equal the defaults, so a misspelled key would still pass the checks above.
+        configuration.GetSection("ResilientRateLimiting:Store")
+            .Get<StoreHealthOptions>(binder => binder.ErrorOnUnknownConfiguration = true);
     }
 
     private static string FindRepoRoot()
