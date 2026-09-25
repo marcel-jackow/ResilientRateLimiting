@@ -19,7 +19,12 @@ These do **not** release anything:
 Do this **before the first Release**. The workflow only names the environment `release`; the approval comes from the environment's settings. If a Release is published while the environment does not exist, GitHub creates it with no rules, and the packages go to nuget.org **without** waiting for approval.
 
 1. **nuget.org account.** Sign in at nuget.org with a Microsoft account and choose a username (it is shown as the package owner). In **Account settings**, turn on two-factor authentication and the email notification for published packages.
-2. **Trusted-publishing policy on nuget.org.** Your username → **Trusted Publishing** → add a policy: repository owner `marcel-jackow`, repository `ResilientRateLimiting`, workflow file `ci.yml` (the file name only), environment `release`.
+2. **Trusted-publishing policy on nuget.org.** Your username → **Trusted Publishing** → add a policy:
+   - **Policy name:** any label, for example `ResilientRateLimiting`.
+   - **Package owner:** your account. **CI/CD provider:** GitHub Actions.
+   - **Repository owner** `marcel-jackow`, **repository** `ResilientRateLimiting`, **workflow file** `ci.yml` (the file name only), **environment** `release`.
+   - **Scope:** "Push" with "Push new packages and package versions" (the first release creates new package IDs). Leave "Unlist or relist" off.
+   - **Glob patterns and packages:** the exact package IDs, one per line: `ResilientRateLimiting` and `ResilientRateLimiting.AspNetCore`. The policy can then publish only these two packages.
 3. **Environment `release` on GitHub.** Settings → Environments → `release`:
    - **Required reviewers:** the maintainer. Leave "Prevent self-review" off, so the maintainer can approve their own release.
    - **Deployment branches and tags:** "Selected branches and tags", with one rule for **tags** matching `v*`.
@@ -38,6 +43,14 @@ The `publish` job uses actions pinned to a commit (the version tag is in a comme
    For a pre-release tag such as `v0.2.0-rc.1`, also tick **Set as a pre-release** on the website, or add `--prerelease` on the command line, so GitHub does not show it as the latest release.
 3. **Approve.** The run pauses before the `publish` job, and GitHub sends an email. Open the run under **Actions**, download the `packages` artifact if you want to look inside, then **Review deployments → Approve**.
 4. **Check.** After a few minutes, both packages show on nuget.org (they are validated first; search can take up to an hour). The Release page has the four package files (`.nupkg` and `.snupkg` for each package).
+
+## Adding a package
+
+A new package needs three changes, or its first release fails:
+
+1. **The nuget.org policy** must allow it: add its exact ID to the policy's glob patterns, and make sure the scope still allows "Push new packages and package versions" (a new ID is a new package, even when the other packages already exist).
+2. **`.github/workflows/ci.yml`:** add a `dotnet pack` line for the project in the Pack step.
+3. **`build/Test-Packages.ps1`:** add the package and its expected dependencies to the table at the top, and update the expected count of two packages. Run `pwsh -NoProfile -File build/Test-BuildScripts.ps1` afterwards.
 
 ## When something fails
 
