@@ -68,10 +68,34 @@ dotnet pack src/ResilientRateLimiting.AspNetCore -c Release -o ./artifacts -p:Co
 
 `-p:ContinuousIntegrationBuild=true` makes the build deterministic and strips local file paths out of the debug symbols, so two people packing the same commit get byte-identical output, and a symbol file never leaks a path from the machine that built it.
 
+## CI and releases
+
+GitHub Actions runs `.github/workflows/ci.yml`:
+
+- **On every pull request and every push to `main`:** build with warnings as errors, run all three test tiers (the integration tier starts Redis in Docker on the build machine), pack both packages, and check them. The packages are kept as a download on the run's page, with a version like `0.1.0-ci.42`. They are never published.
+- **The package check** (`build/Test-Packages.ps1`) fails the run if a package has a dependency other than the expected ones (`System.Threading.RateLimiting` and `Polly.Core` for the core package; the same-version `ResilientRateLimiting` for the ASP.NET Core package), is missing its symbols or README, or if there are not exactly two packages. `build/Test-BuildScripts.ps1` tests this check and the version script with fake input; run it after changing anything in `build/`:
+
+  ```bash
+  pwsh -NoProfile -File build/Test-BuildScripts.ps1
+  ```
+
+**How to release a version:**
+
+1. If the version is new, change `VersionPrefix` in `Directory.Build.props` in a pull request and merge it. The release fails if the tag and `VersionPrefix` differ, so a typo in the tag cannot reach nuget.org.
+2. Create a GitHub Release with a new tag `v<version>` (for example `v0.2.0`) and target `main`. On the website: **Releases → Draft a new release**, type the tag, choose "Create new tag on publish", then **Publish release**. Or from the command line: `gh release create v0.2.0 --target main --generate-notes`.
+3. The run builds, tests and packs, then waits. The maintainer approves it under **Review deployments**. Only then are the packages pushed to nuget.org and attached to the Release.
+
+A `git push` of a tag alone does not release anything; only a published Release does. A saved draft does not either. The run also stops if the Release's commit is not on `main`.
+
+nuget.org never deletes a version, and a version number can be used only once. If a run fails before the push, delete the Release and its tag, fix the cause, and create the Release again.
+
+**SDK and target framework.** `global.json` pins the .NET SDK; CI moves to a new major SDK only when a pull request changes that file. The packages target the oldest supported .NET (today `net10.0`). A new .NET release does not change the target: a `net10.0` package also works in projects on newer .NET. Add a newer target only when the code needs an API from it, and remove `net10.0` only after .NET 10 is out of support, because removing a target breaks the projects that use it.
+
 ## Before you send a change
 
 - `dotnet build ResilientRateLimiting.slnx -warnaserror` is clean.
 - `dotnet test` is green (Docker running, so the integration tier runs too).
+- If you changed anything in `build/`, `pwsh -NoProfile -File build/Test-BuildScripts.ps1` passes.
 - New or changed code that reads the clock takes a `TimeProvider`.
 - New or changed documentation quotes a sample, with a marker, and the snippet test passes.
 - No decision identifiers, employer names, hostnames, tenant claim names, or real limit values anywhere in `src`, `tests`, `samples`, `benchmarks`, `documentation`, `README.md`, or this file.

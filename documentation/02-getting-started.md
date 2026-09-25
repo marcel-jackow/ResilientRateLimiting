@@ -6,7 +6,7 @@ This page is a walk from an empty console app to an ASP.NET Core app with Redis.
 
 You need:
 
-- **.NET 10** (the SDK the samples target).
+- **.NET 10** or later. The packages target `net10.0`, and the samples use the .NET 10 SDK.
 - **Docker**, to run Redis. You do not need it until [Step 4](#step-4-an-aspnet-core-app-with-redis); steps 1 to 3 use small in-process stand-ins for a store, so they need no Docker and no network.
 
 The three packages you will add to a real project:
@@ -18,8 +18,6 @@ dotnet add package ResilientRateLimiting.AspNetCore
 ```
 
 `ResilientRateLimiting` is the core package (the resilience wrapper). `RedisRateLimiting` is a separate, open-source package that does the actual counting in Redis; see [RedisRateLimiting](01-concepts.md#redisratelimiting). `ResilientRateLimiting.AspNetCore` is only for ASP.NET Core apps, used from [Step 4](#step-4-an-aspnet-core-app-with-redis) on.
-
-These packages are not on nuget.org yet (this library is at version 0.1.0, unpublished). Until the first release, add a project reference to this repository's `src/ResilientRateLimiting` and `src/ResilientRateLimiting.AspNetCore` projects instead of the `dotnet add package` commands above.
 
 This page quotes the two sample projects in this repository: `samples/ResilientRateLimiting.Samples.Console` and `samples/ResilientRateLimiting.Samples.Web`. Clone the repository if you want to run the same commands. [samples/README.md](../samples/README.md) lists every scenario in both samples and links each one to the page that explains it.
 

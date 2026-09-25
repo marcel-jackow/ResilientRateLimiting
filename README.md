@@ -1,5 +1,9 @@
 # ResilientRateLimiting
 
+[![ResilientRateLimiting on NuGet](https://img.shields.io/nuget/v/ResilientRateLimiting?label=ResilientRateLimiting)](https://www.nuget.org/packages/ResilientRateLimiting)
+[![ResilientRateLimiting.AspNetCore on NuGet](https://img.shields.io/nuget/v/ResilientRateLimiting.AspNetCore?label=ResilientRateLimiting.AspNetCore)](https://www.nuget.org/packages/ResilientRateLimiting.AspNetCore)
+[![CI](https://github.com/marcel-jackow/ResilientRateLimiting/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/marcel-jackow/ResilientRateLimiting/actions/workflows/ci.yml)
+
 Resilience for distributed rate limiting: a timeout, a circuit breaker, and a local fallback for any store-backed `RateLimiter`, so a slow or down shared store never becomes an outage.
 
 ## What it is
@@ -34,12 +38,7 @@ dotnet add package RedisRateLimiting
 dotnet add package ResilientRateLimiting.AspNetCore
 ```
 
-These packages are not on nuget.org yet (this library is at version 0.1.0, unpublished). Until the first release, reference the projects directly from a clone of this repository instead:
-
-```bash
-dotnet add reference path/to/ResilientRateLimiting/src/ResilientRateLimiting/ResilientRateLimiting.csproj
-dotnet add reference path/to/ResilientRateLimiting/src/ResilientRateLimiting.AspNetCore/ResilientRateLimiting.AspNetCore.csproj
-```
+Both packages need **.NET 10 or later**: they target `net10.0`. `ResilientRateLimiting.AspNetCore` is for ASP.NET Core apps on .NET 10 or later.
 
 ## Quick start
 
