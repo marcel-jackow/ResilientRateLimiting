@@ -8,6 +8,8 @@ namespace ResilientRateLimiting;
 /// <para>Must not wrap another <see cref="ResilientRateLimiter"/>: nesting shadows the inner lease's source metadata,
 /// because the outer instance always reports its own <see cref="LeaseSource"/> instead of passing the inner one through.</para>
 /// <para>Call <c>AcquireAsync</c> to use this type. <c>AttemptAcquire</c> always rejects, because no store was consulted.</para>
+/// <para>Safe to call from many requests at the same time: one instance is meant to be shared by every request for its
+/// partition. The primary and fallback limiters must also be safe for concurrent use, as the .NET built-in limiters are.</para>
 /// <para>When the store limiter or the fallback limiter throws <see cref="ArgumentException"/>,
 /// <see cref="ObjectDisposedException"/>, or <see cref="InvalidOperationException"/>, and
 /// <see cref="StoreHealthOptions.ShouldHandle"/> does not say otherwise, the exception is treated as a caller

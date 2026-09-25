@@ -52,6 +52,7 @@ Both packages target .NET 10. The library does not talk to Redis itself. It wrap
 - **Call `AcquireAsync`, never `AttemptAcquire`.** `AttemptAcquire` always rejects (see below).
 - **Do not wrap another `ResilientRateLimiter`.** Nothing stops you at run time, but it breaks two things. The inner wrapper already handles every store failure, so the outer one never sees a failure and its own fallback never runs. And the outer wrapper always tags the lease with its own [source tag](01-concepts.md#source-tag), so it hides what the inner one did: a request served by the inner fallback reaches you tagged `Distributed`.
 - **Dispose only the wrapper.** It disposes the primary and the fallback limiter for you.
+- **Share one instance across concurrent requests.** It is safe to call `AcquireAsync` from many requests at the same time; in a web app, all requests for one partition share one instance. Its own state changes only through atomic operations, and the counting itself happens in the primary and fallback limiters, which must also be safe for concurrent use (the .NET built-in limiters and `RedisRateLimiting`'s limiters are designed for it).
 
 **See also.** [`WithResilience`](#withresilience), [`ResilientRateLimitPartition.Get`](#partition-get), [`StoreHealth`](#storehealth).
 
