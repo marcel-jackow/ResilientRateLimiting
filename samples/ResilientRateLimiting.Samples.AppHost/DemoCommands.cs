@@ -7,6 +7,7 @@ namespace ResilientRateLimiting.Samples.AppHost;
 internal sealed class DemoCommands
 {
     private const string NoGateway = "The gateway is not running yet; start it and try again.";
+    private const string NoRedis = "Redis is not running. Start it first (4.1 Start Redis): an API cannot start without Redis. Nothing was changed.";
     private const string NeedsRedis = "Restarts the three APIs. Use it while Redis is running: an API cannot start without Redis.";
 
     // Not rate limited, so checking that a restarted app answers records no lease.
@@ -98,16 +99,43 @@ internal sealed class DemoCommands
         return result.Success ? Report(context, true, done) : Report(context, false, $"Redis: {result.Message}");
     }
 
-    private Task<ExecuteCommandResult> SetModeAsync(ExecuteCommandContext context, string mode, string done)
+    private async Task<ExecuteCommandResult> SetModeAsync(ExecuteCommandContext context, string mode, string done)
     {
+        if (!await RedisRunningAsync(context))
+        {
+            return Report(context, false, NoRedis);
+        }
+
         _settings.Mode = mode;
-        return RestartAsync(context, _apis.Select(api => api.Resource), done);
+        return await RestartAsync(context, _apis.Select(api => api.Resource), done);
     }
 
-    private Task<ExecuteCommandResult> SetReplicaCountAsync(ExecuteCommandContext context, int replicaCount, string done)
+    private async Task<ExecuteCommandResult> SetReplicaCountAsync(ExecuteCommandContext context, int replicaCount, string done)
     {
+        if (!await RedisRunningAsync(context))
+        {
+            return Report(context, false, NoRedis);
+        }
+
         _settings.ReplicaCount = replicaCount;
-        return RestartAsync(context, _apis.Select(api => api.Resource), done);
+        return await RestartAsync(context, _apis.Select(api => api.Resource), done);
+    }
+
+    // An API cannot start without Redis, so check before changing a setting or restarting anything.
+    private async Task<bool> RedisRunningAsync(ExecuteCommandContext context)
+    {
+        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(context.CancellationToken);
+        timeout.CancelAfter(TimeSpan.FromSeconds(1));
+        try
+        {
+            await context.Services.GetRequiredService<ResourceNotificationService>()
+                .WaitForResourceAsync(_redis.Resource.Name, KnownResourceStates.Running, timeout.Token);
+            return true;
+        }
+        catch (OperationCanceledException) when (!context.CancellationToken.IsCancellationRequested)
+        {
+            return false;
+        }
     }
 
     // Aspire reports Running before the app listens, so wait for an answer: the next demo step may stop Redis.
