@@ -65,7 +65,16 @@ internal sealed class DemoTraffic
     public async Task<(int Allowed, int Limited, int Failed)> BurstAsync(Uri gateway, int count, CancellationToken cancellationToken)
     {
         var client = $"burst-{Guid.NewGuid():N}"[..14];
-        var results = await Task.WhenAll(Enumerable.Range(0, count).Select(_ => SendAsync(gateway, client, cancellationToken))).ConfigureAwait(false);
+
+        // Spaced out so the APIs take turns at the shared limit instead of racing for it.
+        var sends = new List<Task<HttpStatusCode?>>(count);
+        for (var i = 0; i < count; i++)
+        {
+            sends.Add(SendAsync(gateway, client, cancellationToken));
+            await Task.Delay(TimeSpan.FromMilliseconds(10), cancellationToken).ConfigureAwait(false);
+        }
+
+        var results = await Task.WhenAll(sends).ConfigureAwait(false);
         return (results.Count(s => s == HttpStatusCode.OK), results.Count(s => s == HttpStatusCode.TooManyRequests), results.Count(s => s is not HttpStatusCode.OK and not HttpStatusCode.TooManyRequests));
     }
 
