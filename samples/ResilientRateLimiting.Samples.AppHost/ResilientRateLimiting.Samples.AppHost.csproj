@@ -1,0 +1,18 @@
+<Project Sdk="Aspire.AppHost.Sdk/13.5.4">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <IsPackable>false</IsPackable>
+    <UserSecretsId>resilient-rate-limiting-samples-apphost</UserSecretsId>
+    <!-- CI has no Aspire CLI; the dashboard and orchestrator come from NuGet instead of the CLI bundle. -->
+    <NoWarn>$(NoWarn);ASPIRE010</NoWarn>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Aspire.Hosting.Redis" />
+    <!-- Aspire 13.5/13.6 bring MessagePack 2.5.302 (GHSA-qhrr-8q5h-9q3h, fixed in 2.5.303) through StreamJsonRpc. -->
+    <PackageReference Include="MessagePack" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="../ResilientRateLimiting.Samples.Web/ResilientRateLimiting.Samples.Web.csproj" />
+    <ProjectReference Include="../ResilientRateLimiting.Samples.Gateway/ResilientRateLimiting.Samples.Gateway.csproj" />
+  </ItemGroup>
+</Project>

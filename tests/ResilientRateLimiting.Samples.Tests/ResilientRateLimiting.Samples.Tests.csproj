@@ -1,0 +1,18 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <IsPackable>false</IsPackable>
+    <GenerateDocumentationFile>false</GenerateDocumentationFile>
+  </PropertyGroup>
+  <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+  </ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="xunit.v3" />
+    <PackageReference Include="xunit.runner.visualstudio" />
+    <PackageReference Include="Microsoft.NET.Test.Sdk" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="../../samples/ResilientRateLimiting.Samples.Gateway/ResilientRateLimiting.Samples.Gateway.csproj" />
+  </ItemGroup>
+</Project>

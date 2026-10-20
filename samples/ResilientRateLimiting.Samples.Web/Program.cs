@@ -1,4 +1,5 @@
 using Microsoft.AspNetCore.RateLimiting;
+using OpenTelemetry;
 using OpenTelemetry.Metrics;
 using RedisRateLimiting;
 using ResilientRateLimiting;
@@ -124,17 +125,36 @@ builder.Services.AddRateLimiter(limiterOptions =>
             secondaryPolicyOptions,
             secondaryStoreHealth);
     });
+
+    // The Aspire demo's "before" picture: each process counts alone, so N replicas admit N times the limit.
+    limiterOptions.AddPolicy("per-client-in-memory", context => RateLimitPartition.GetFixedWindowLimiter(
+        context.Request.Headers["X-Client-Id"].FirstOrDefault() ?? "anonymous",
+        _ => new FixedWindowRateLimiterOptions
+        {
+            PermitLimit = rateLimits.PermitLimit,
+            Window = TimeSpan.FromSeconds(rateLimits.WindowSeconds),
+            QueueLimit = 0,
+        }));
 });
 
 // snippet: web-meter
 builder.Services.AddOpenTelemetry().WithMetrics(metrics => metrics.AddMeter(ResilientRateLimiter.MeterName));
 // end-snippet
 
+// Only under the Aspire demo rig, which sets this variable.
+if (!string.IsNullOrEmpty(builder.Configuration["OTEL_EXPORTER_OTLP_ENDPOINT"]))
+{
+    builder.Services.AddOpenTelemetry()
+        .WithMetrics(metrics => metrics.AddMeter("Microsoft.AspNetCore.RateLimiting"))
+        .WithLogging()
+        .UseOtlpExporter();
+}
+
 var app = builder.Build();
 
 app.UseRateLimiter();
 
-app.MapGet("/", () => "hello").RequireRateLimiting("per-client");
+app.MapGet("/", () => "hello").RequireRateLimiting(rateLimits.Mode == RateLimitMode.InMemory ? "per-client-in-memory" : "per-client");
 app.MapGet("/secondary", () => "hello from secondary").RequireRateLimiting("per-client-secondary");
 
 app.Run();
@@ -146,4 +166,12 @@ internal sealed record RateLimitsOptions
     public int WindowSeconds { get; init; }
 
     public int TypicalReplicaCount { get; init; }
+
+    public RateLimitMode Mode { get; init; }
+}
+
+internal enum RateLimitMode
+{
+    Resilient,
+    InMemory,
 }
