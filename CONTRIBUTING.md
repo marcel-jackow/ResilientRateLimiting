@@ -16,11 +16,12 @@ dotnet build ResilientRateLimiting.slnx -warnaserror
 dotnet test
 ```
 
-This runs three tiers:
+This runs four test projects:
 
 - `ResilientRateLimiting.Tests` — unit tests for the core package. No Docker needed.
 - `ResilientRateLimiting.AspNetCore.Tests` — unit tests for the ASP.NET Core package. No Docker needed.
 - `ResilientRateLimiting.IntegrationTests` — tests against a real Redis, started by Testcontainers. Docker must be running.
+- `ResilientRateLimiting.Samples.Tests` — unit tests for the demo gateway's load-balancing policy. No Docker needed.
 
 Tests use plain xUnit `Assert`. Do not add assertion or mocking libraries.
 
@@ -74,7 +75,7 @@ dotnet pack src/ResilientRateLimiting.AspNetCore -c Release -o ./artifacts -p:Co
 
 GitHub Actions runs `.github/workflows/ci.yml`:
 
-- **On every pull request and every push to `main`:** build with warnings as errors, run all three test tiers (the integration tier starts Redis in Docker on the build machine), pack both packages, and check them. The packages are kept as a download on the run's page, with a version like `0.1.0-ci.42`. They are never published.
+- **On every pull request and every push to `main`:** build with warnings as errors, run all four test projects (the integration tests start Redis in Docker on the build machine), pack both packages, and check them. The packages are kept as a download on the run's page, with a version like `0.1.0-ci.42`. They are never published.
 - **The package check** (`build/Test-Packages.ps1`) fails the run if a package has a dependency other than the expected ones (`System.Threading.RateLimiting` and `Polly.Core` for the core package; the same-version `ResilientRateLimiting` for the ASP.NET Core package), is missing its symbols or README, or if there are not exactly two packages. `build/Test-BuildScripts.ps1` tests this check and the version script with fake input; run it after changing anything in `build/`:
 
   ```bash

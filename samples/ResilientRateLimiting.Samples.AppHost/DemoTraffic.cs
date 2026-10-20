@@ -9,11 +9,6 @@ internal sealed class DemoTraffic
     private readonly Lock _lock = new();
     private CancellationTokenSource? _steady;
 
-    public bool SteadyRunning
-    {
-        get { lock (_lock) { return _steady is not null; } }
-    }
-
     public bool StartSteady(Uri gateway, int requestsPerSecond)
     {
         CancellationTokenSource source;
@@ -103,7 +98,7 @@ internal sealed class DemoTraffic
             using var response = await _client.SendAsync(request, cancellationToken).ConfigureAwait(false);
             return response.StatusCode;
         }
-        catch (Exception exception) when (exception is HttpRequestException or TaskCanceledException or OperationCanceledException)
+        catch (Exception exception) when (exception is HttpRequestException or OperationCanceledException)
         {
             return null;
         }
